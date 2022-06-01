@@ -9,7 +9,7 @@ searcher:
    # max_length is ignored if the training script ignores it.
    max_length: 1
 
-# environment:
-#   image: julia:1.7.3-buster
+environment:
+  image: mackrorysd/julia-harness
 
 max_restarts: 0
