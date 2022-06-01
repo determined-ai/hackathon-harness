@@ -1,9 +1,11 @@
-function dctx_gather(ctx, data, len)
-    result = ccall((:dctx_gather, "libdctx"), Ptr{Cvoid},
+function dctx_gather_start(ctx, data, len)
+    ccall((:dctx_gather_start, "libdctx"), Cint,
         (Ptr{Cvoid}, Ptr{UInt8}, Csize_t),
         ctx, ser, len)
-    return result
 end
+
+function dctx_gather_end(ctx)
+    ccall(:dctx_gather_end, "libdctx"), Ptr(Cvoid), (Ptr{Cvoid},), ctx)
 
 function dc_result_ok(dc_result)
     ccall((:dc_result_ok, "libdctx"), Cuchar, (Ptr{Cvoid},), dc_result)
