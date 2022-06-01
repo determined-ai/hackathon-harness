@@ -1,6 +1,5 @@
 name: julia-core-api
 entrypoint: julia mnist.jl
-max_restarts: 0
 searcher:
   name: random
   metric: validation_accuracy
