@@ -42,5 +42,3 @@ void dctx_close(struct dctx **dctx);
 
 // will free(*data) eventually
 struct dc_result *dctx_allgather(struct dctx *dctx, char *data, size_t len);
-
-int hello(char *);
