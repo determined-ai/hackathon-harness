@@ -169,7 +169,7 @@ static int test_dctx(void){
     char *data = NULL;
 
     struct dctx *chief;
-    int ret = dctx_open(&chief, 0, 3, 0, 3, 0, 1, "localhost", "1234");
+    int ret = dctx_open(&chief, 0, 3, 0, 3, 0, 1, "0.0.0.0", "1234");
     if(ret){
         printf("dctx_open failed! %d\n", ret);
         return 1;
@@ -190,7 +190,7 @@ static int test_dctx(void){
     }
 
     // HACK: allow connections to occur
-    usleep(300000);
+    usleep(100000);
 
     ASSERT(dctx_gather_start(chief, strdup("chief"), 5) == 0);
     ASSERT(dctx_gather_start(worker1, strdup("worker1"), 7) == 0);
@@ -212,7 +212,6 @@ static int test_dctx(void){
     ASSERT(strncmp(data, "chief", len) == 0);
     free(data);
     data = dc_result_take(c, 1, &len);
-    printf("len: %zu\n", len);
     ASSERT(len == 7);
     ASSERT(strncmp(data, "worker1", len) == 0);
     free(data);

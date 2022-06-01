@@ -24,8 +24,17 @@ struct dc_conn *dc_conn_close(struct dc_conn *conn){
         out = conn->next;
     }
     // remove from the dctx so it cannot be closed twice
-    conn->prev->next = conn->next;
-    conn->next->prev = conn->prev;
+    struct dctx *dctx = conn->tcp.loop->data;
+    if(conn->next == conn){
+        // was the final conn
+        dctx->server.preinit = NULL;
+    }else{
+        conn->prev->next = conn->next;
+        conn->next->prev = conn->prev;
+    }
+    if(conn->rank > -1){
+        dctx->server.peers[conn->rank] = NULL;
+    }
 
     // start the close process
     uv_close((uv_handle_t*)&conn->tcp, conn_close_cb);
@@ -47,6 +56,7 @@ int bind_via_gai(uv_tcp_t *srv, const char *addr, const char *svc){
         fprintf(
             stderr, "getaddrinfo(%s:%s): %s\n", addr, svc, gai_strerror(ret)
         );
+        printf("gai failed\n");
         return 1;
     }
 
@@ -101,7 +111,7 @@ static void listener_cb(uv_stream_t *srv, int status){
         goto fail;
     }
 
-    // rprintf("accepted a connection!\n");
+    rprintf("accepted a connection!\n");
 
     // remember this connection, as a preinit
     if(dctx->server.preinit == NULL){
@@ -252,7 +262,7 @@ int init_server(struct dctx *dctx){
     }
 
     // chief, bind and listen
-    ret = bind_via_gai(&dctx->tcp, "localhost", "1234");
+    ret = bind_via_gai(&dctx->tcp, dctx->host, dctx->svc);
     if(ret < 0){
         return 1;
     }

@@ -9,7 +9,12 @@ int start_gai(struct dctx *dctx){
     // hints.ai_flags = AI_ADDRCONFIG;
 
     int ret = uv_getaddrinfo(
-        &dctx->loop, &dctx->client.gai_req, gai_cb, "localhost", "1234", &hints
+        &dctx->loop,
+        &dctx->client.gai_req,
+        gai_cb,
+        dctx->host,
+        dctx->svc,
+        &hints
     );
     // how does this even happen?
     if(ret < 0){

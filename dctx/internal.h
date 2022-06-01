@@ -166,9 +166,6 @@ int tcp_write_copy(uv_tcp_t *tcp, const char *base, size_t len);
 // you must guarantee that write_cb is done before freeing base
 int tcp_write_nofree(uv_tcp_t *tcp, char *base, size_t len);
 
-int dctx_gather_start(struct dctx *dctx, char *data, size_t len);
-struct dc_result *dctx_gather_end(struct dctx *dctx);
-
 // server
 
 struct dc_conn *dc_conn_new(void);

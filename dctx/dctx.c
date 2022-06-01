@@ -291,6 +291,7 @@ int dctx_open(
 void dctx_close(struct dctx **dctxptr){
     struct dctx *dctx = *dctxptr;
     if(!dctx) return;
+    rprintf("dctx_close!\n");
 
     // ask the loop to shutdown
     dctx->a.close = true;

@@ -30,8 +30,8 @@ function(default_compile_options tgt)
     target_compile_options("${tgt}" PRIVATE "-Wvla")
     target_compile_options("${tgt}" PRIVATE "-fdiagnostics-color=always")
     # address sanitizer
-    target_compile_options("${tgt}" PRIVATE "-fsanitize=address" "-fno-omit-frame-pointer")
-    target_link_libraries("${tgt}" PRIVATE "-fsanitize=address" "-fno-omit-frame-pointer")
+    # target_compile_options("${tgt}" PRIVATE "-fsanitize=address" "-fno-omit-frame-pointer")
+    # target_link_libraries("${tgt}" PRIVATE "-fsanitize=address" "-fno-omit-frame-pointer")
 
     # executables only:
     get_target_property(tgt_type "${tgt}" TYPE)
