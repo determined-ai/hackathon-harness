@@ -3,7 +3,7 @@ dctx/build/libdctx.so:
 
 .PHONY: run
 run:
-	LD_LIBRARY_PATH=`pwd`/dctx/build julia dctx.jl
+	LD_LIBRARY_PATH=`pwd`/dctx/build julia allgather.jl
 
 docker: dctx/build/libdctx.so
 	cp dctx/build/libdctx.so model/
