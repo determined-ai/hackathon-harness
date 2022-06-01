@@ -9,6 +9,8 @@ using HTTP
 using JSON
 using Random
 
+include("../logging.jl")
+
 master_url = ENV["DET_MASTER"]
 token = ENV["DET_SESSION_TOKEN"]
 trial_run_id = ENV["DET_TRIAL_RUN_ID"]
@@ -20,6 +22,7 @@ hparams = JSON.parse(ENV["DET_HPARAMS"])
 println(hparams["increment_by"])
 
 function report_training_metrics(steps_completed, metrics)
+    @info "report_training_metrics(steps_completed=$steps_completed, metrics=$metrics)"
     body = Dict(
         "trial_run_id" => trial_run_id,
         "steps_completed" => steps_completed,
@@ -34,6 +37,7 @@ function report_training_metrics(steps_completed, metrics)
 end
 
 function report_validation_metrics(steps_completed, metrics)
+    @info "report_validation_metrics(steps_completed=$steps_completed, metrics=$metrics)"
     body = Dict(
         "trial_run_id" => trial_run_id,
         "steps_completed" => steps_completed,
