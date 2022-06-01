@@ -13,6 +13,7 @@ if("${LIBUV_LIB}" STREQUAL "")
     find_library(LIBUV_LIB NAMES uv)
 endif()
 
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 function(default_compile_options tgt)
     target_compile_options("${tgt}" PRIVATE "-Werror")

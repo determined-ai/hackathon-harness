@@ -391,3 +391,8 @@ void unmarshal_free(struct dc_unmarshal *u){
     if(u->body) free(u->body);
     *u = (struct dc_unmarshal){0};
 }
+
+int hello(char *text) {
+  printf("Hello, %s\n", text);
+  return 7;
+}
