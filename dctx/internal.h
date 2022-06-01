@@ -16,6 +16,7 @@ struct dc_result {
 };
 
 extern struct dc_result NOT_OK;
+extern struct dc_result OK_EMPTY;
 
 struct dc_buf {
     char *base;
@@ -54,6 +55,24 @@ enum dc_status {
     DCTX_DONE,
 };
 
+enum dc_op_type {
+    // no op in progress
+    DC_OP_NONE=0,
+    DC_OP_GATHER,
+};
+
+union dc_op {
+    struct {
+        char *data;
+        size_t len;
+    } gather_chief;
+    struct {
+        char *data;
+        size_t len;
+        bool sent;
+    } gather_worker;
+};
+
 struct dctx {
     int rank;
     int size;
@@ -62,15 +81,22 @@ struct dctx {
     int cross_rank;
     int cross_size;
 
+    char *host;
+    char *svc;
+
     uv_loop_t loop;
     uv_async_t async;
     // XXX: track when main tcp needs closing still?
     uv_tcp_t tcp;
     struct dc_unmarshal unmarshal;
 
+    // XXX: I think a should always be mutex protected
     struct {
         bool started;
         bool close;
+        enum dc_op_type op_type;
+        union dc_op op;
+        bool op_done;
     } a;
 
     struct {
@@ -78,6 +104,11 @@ struct dctx {
         struct dc_conn *preinit;
         // connections of known rank
         struct dc_conn **peers;
+        // we only allow one message per peer at a time
+        char **buf;
+        size_t *len;
+        // a global count which is reset between ops
+        size_t msgs_recvd;
     } server;
 
     struct {
@@ -86,12 +117,17 @@ struct dctx {
         struct addrinfo *ptr;
         uv_connect_t conn_req;
         uv_timer_t timer;
+
+        struct {
+        } gather;
+
     } client;
 
-    // common hooks
+    // called on failed read or failed write
     void (*on_broken_connection)(struct dctx*, uv_stream_t*);
-    void (*on_read)(struct dctx*, uv_stream_t*, const uv_buf_t*);
-    void (*on_msg)(struct dctx*, uv_stream_t*);
+
+    // called on every successful read
+    void (*on_read)(struct dctx*, uv_stream_t*, char*, size_t);
 
     pthread_t thread;
     pthread_mutex_t mutex;
@@ -99,6 +135,11 @@ struct dctx {
     int status;
     bool failed;
 };
+
+struct dc_result *dc_result_new(size_t ndata);
+void dc_result_set(struct dc_result *r, size_t i, char *data, size_t len);
+
+void advance_state(struct dctx *dctx);
 
 void noop_handle_closer(uv_handle_t *handle);
 void close_everything(struct dctx *dctx);
@@ -111,11 +152,22 @@ void read_cb(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf);
 // calls on_unmarshal once for every message found
 int unmarshal(
     struct dc_unmarshal *unmarshal,
-    const uv_buf_t *buf,
+    char *buf,
+    size_t len,
     void (*on_unmarshal)(struct dc_unmarshal*, void*),
     void *arg
 );
 void unmarshal_free(struct dc_unmarshal *unmarshal);
+
+// will call free(base)
+int tcp_write(uv_tcp_t *tcp, char *base, size_t len);
+// will copy base first, then call tcp_write
+int tcp_write_copy(uv_tcp_t *tcp, const char *base, size_t len);
+// you must guarantee that write_cb is done before freeing base
+int tcp_write_nofree(uv_tcp_t *tcp, char *base, size_t len);
+
+int dctx_gather_start(struct dctx *dctx, char *data, size_t len);
+struct dc_result *dctx_gather_end(struct dctx *dctx);
 
 // server
 
@@ -127,6 +179,8 @@ struct dc_conn *dc_conn_close(struct dc_conn *conn);
 int bind_via_gai(uv_tcp_t *srv, const char *addr, const char *svc);
 
 int init_server(struct dctx *dctx);
+
+void server_enable_reads(struct dctx *dctx);
 
 // client
 

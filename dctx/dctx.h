@@ -32,8 +32,8 @@ int dctx_open(
     int local_size,
     int cross_rank,
     int cross_size,
-    const char *chief_addr,
-    const size_t len
+    const char *chief_host,
+    const char *chief_svc
 );
 
 // can tolerate *dctx=NULL, otherwise eventually sets *dctx=NULL
@@ -41,4 +41,4 @@ void dctx_close(struct dctx **dctx);
 
 
 // will free(*data) eventually
-struct dc_result *dctx_allgather(struct dctx *dctx, char *data, size_t len);
+struct dc_result *dctx_gather(struct dctx *dctx, char *data, size_t len);

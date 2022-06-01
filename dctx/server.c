@@ -101,7 +101,7 @@ static void listener_cb(uv_stream_t *srv, int status){
         goto fail;
     }
 
-    rprintf("accepted a connection!\n");
+    // rprintf("accepted a connection!\n");
 
     // remember this connection, as a preinit
     if(dctx->server.preinit == NULL){
@@ -157,7 +157,7 @@ struct unmarshal_data {
     struct dc_conn *conn;
 };
 
-static void on_unmarshal(struct dc_unmarshal *unmarshal, void *arg){
+static void on_unmarshal(struct dc_unmarshal *u, void *arg){
     struct unmarshal_data *data = arg;
     struct dctx *dctx = data->dctx;
     struct dc_conn *conn = data->conn;
@@ -168,7 +168,7 @@ static void on_unmarshal(struct dc_unmarshal *unmarshal, void *arg){
             rprintf("got non-init message from preinit connection\n");
             goto fail;
         }
-        int i = dctx->rank;
+        int i = u->rank;
         if(i < 0 || i > dctx->size){
             rprintf("got invalid rank in init message: %d\n", i);
             goto fail;
@@ -177,10 +177,12 @@ static void on_unmarshal(struct dc_unmarshal *unmarshal, void *arg){
             rprintf("got duplicate rank in init message: %d\n", i);
             goto fail;
         }
-        // transition from preinit to
+        // transition from preinit to a ranked peer
         if(conn->next == conn){
             // last preinit container
+            dctx->server.preinit = NULL;
         }else{
+            // not last preinit container
             struct dc_conn *first = dctx->server.preinit;
             struct dc_conn *last = dctx->server.preinit->prev;
             first->prev = conn;
@@ -188,14 +190,35 @@ static void on_unmarshal(struct dc_unmarshal *unmarshal, void *arg){
             conn->prev = last;
             conn->next = first;
         }
-        dc->conn
-
+        // store conn at the right rank
+        dctx->server.peers[i] = conn;
+        conn->rank = i;
+        // rprintf("promoted peer=%d\n", i);
+        return;
     }
-    // non-preinit: only "m"essages
 
-    (void)unmarshal;
-    (void)dctx;
-    (void)conn;
+    // non-preinit: store message for rank and stop reading
+    // rprintf("read: %.*s\n", (int)u->len, u->body);
+    if(dctx->server.buf[conn->rank] != NULL){
+        rprintf("somehow got another message from rank=%d\n", conn->rank);
+        goto fail;
+    }
+    // take ownership of the buffer
+    dctx->server.buf[conn->rank] = u->body;
+    dctx->server.len[conn->rank] = u->len;
+    u->body = NULL;
+    // increment the number of messages received
+    dctx->server.msgs_recvd++;
+
+    // stop reading on this stream
+    int ret = uv_read_stop((uv_stream_t*)&conn->tcp);
+    if(ret < 0){
+        uv_perror("uv_read_stop", ret);
+        goto fail;
+    }
+
+    // check for state changes
+    advance_state(dctx);
 
     return;
 
@@ -205,13 +228,13 @@ fail:
 }
 
 static void on_read(
-    struct dctx *dctx, uv_stream_t *stream, const uv_buf_t *buf
+    struct dctx *dctx, uv_stream_t *stream, char *buf, size_t len
 ){
     (void)dctx;
     struct dc_conn *conn = stream->data;
 
     struct unmarshal_data data = {dctx, conn};
-    int ret = unmarshal(&conn->unmarshal, buf, on_unmarshal, &data);
+    int ret = unmarshal(&conn->unmarshal, buf, len, on_unmarshal, &data);
     if(ret) goto fail;
 
     return;
@@ -245,4 +268,21 @@ int init_server(struct dctx *dctx){
     dctx->on_read = on_read;
 
     return 0;
+}
+
+void server_enable_reads(struct dctx *dctx){
+    for(int i = 1; i < dctx->size; i++){
+        // continue reading from this connection
+        struct dc_conn *conn = dctx->server.peers[i];
+        int ret = uv_read_start((uv_stream_t*)&conn->tcp, allocator, read_cb);
+        if(ret < 0){
+            uv_perror("uv_read_start", ret);
+            goto fail;
+        }
+    }
+    return;
+
+fail:
+    dctx->failed = true;
+    close_everything(dctx);
 }

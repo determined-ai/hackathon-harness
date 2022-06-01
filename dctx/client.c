@@ -69,21 +69,36 @@ int conn_next(struct dctx *dctx){
 
 void conn_cb(uv_connect_t *req, int status){
     struct dctx *dctx = req->data;
-    if(status == 0){
-        // success!
-        rprintf("connection made!\n");
 
-        uv_freeaddrinfo(dctx->client.gai);
-        dctx->client.gai = NULL;
+    if(status < 0){
+        // failure
+        uv_perror("uv_tcp_connect(callback)", status);
 
-        // TODO: now what??
+        // failed to connect, close tcp and try the next one
+        close_for_retry(dctx);
         return;
     }
 
-    uv_perror("uv_tcp_connect(callback)", status);
+    // rprintf("connection made!\n");
 
-    // failed to connect, close tcp and try the next one
-    close_for_retry(dctx);
+    uv_freeaddrinfo(dctx->client.gai);
+    dctx->client.gai = NULL;
+
+    // send our rank as our first message
+    char buf[5] = {0};
+    buf[0] = 'i';
+    buf[1] = (char)(0xFF & (dctx->rank >> 3));
+    buf[2] = (char)(0xFF & (dctx->rank >> 2));
+    buf[3] = (char)(0xFF & (dctx->rank >> 1));
+    buf[4] = (char)(0xFF & (dctx->rank >> 0));
+    int ret = tcp_write_copy(&dctx->tcp, buf, 5);
+    if(ret) goto fail;
+
+    return;
+
+fail:
+    dctx->failed = true;
+    close_everything(dctx);
 }
 
 void close_for_retry(struct dctx *dctx){
@@ -132,11 +147,12 @@ static void on_broken_connection(struct dctx *dctx, uv_stream_t *stream){
 }
 
 static void on_read(
-    struct dctx *dctx, uv_stream_t *stream, const uv_buf_t *buf
+    struct dctx *dctx, uv_stream_t *stream, char *buf, size_t len
 ){
     (void)dctx;
     (void)stream;
-    free(buf->base);
+    (void)len;
+    free(buf);
 }
 
 int init_client(struct dctx *dctx){
