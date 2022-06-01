@@ -164,6 +164,32 @@ static void on_unmarshal(struct dc_unmarshal *unmarshal, void *arg){
 
     if(conn->rank == -1){
         // preinit connection, only "i"int
+        if(u->type != 'i'){
+            rprintf("got non-init message from preinit connection\n");
+            goto fail;
+        }
+        int i = dctx->rank;
+        if(i < 0 || i > dctx->size){
+            rprintf("got invalid rank in init message: %d\n", i);
+            goto fail;
+        }
+        if(dctx->server.peers[i] != NULL){
+            rprintf("got duplicate rank in init message: %d\n", i);
+            goto fail;
+        }
+        // transition from preinit to
+        if(conn->next == conn){
+            // last preinit container
+        }else{
+            struct dc_conn *first = dctx->server.preinit;
+            struct dc_conn *last = dctx->server.preinit->prev;
+            first->prev = conn;
+            last->next = conn;
+            conn->prev = last;
+            conn->next = first;
+        }
+        dc->conn
+
     }
     // non-preinit: only "m"essages
 
@@ -172,6 +198,10 @@ static void on_unmarshal(struct dc_unmarshal *unmarshal, void *arg){
     (void)conn;
 
     return;
+
+fail:
+    dctx->failed = true;
+    close_everything(dctx);
 }
 
 static void on_read(
