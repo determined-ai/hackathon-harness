@@ -1,5 +1,5 @@
-function dctx_allgather(ctx, data, len)
-    result = ccall((:dctx_allgather, "libdctx"), Ptr{Cvoid},
+function dctx_gather(ctx, data, len)
+    result = ccall((:dctx_gather, "libdctx"), Ptr{Cvoid},
         (Ptr{Cvoid}, Ptr{UInt8}, Csize_t),
         ctx, ser, len)
     return result
@@ -19,11 +19,15 @@ function dc_result_take(dc_result, i)
     return data, len
 end
 
-function allgather(ctx, data)
+function gather(ctx, data)
     buf = IOBuffer()
     serialize(buf, data)
     ser = takebuf_string(io)
-    result = dctx_allgather(ser, lastindex(ser))
+    status = dctx_gather_start(ctx, ser, lastindex(ser))
+    if status != 0
+        error("failed to start gather")
+    end
+    result = dctx_gather_end(ctx)
     if !dc_result_ok(result)
         error("distributed result was not ok")
     end
