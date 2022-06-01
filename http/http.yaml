@@ -1,15 +1,18 @@
 name: julia-client
 entrypoint: julia playground.jl
 
-# Use the single-searcher to run just one instance of the training script
-searcher:
-   name: single
-   # metric is required but it shouldn't hurt to ignore it at this point.
-   metric: x
-   # max_length is ignored if the training script ignores it.
-   max_length: 1
 
-# environment:
-#   image: julia:1.7.3-buster
+searcher:
+  name: random
+  metric: validation_accuracy
+  max_trials: 5
+  max_length: 5
+hyperparameters:
+  increment_by:
+    type: int
+    minval: 1
+    maxval: 8
+environment:
+  image: mackrorysd/julia-harness
 
 max_restarts: 0
