@@ -19,7 +19,7 @@ experiment_id = ENV["DET_EXPERIMENT_ID"]
 
 hparams = JSON.parse(ENV["DET_HPARAMS"])
 
-println(hparams["increment_by"])
+@debug "hparams[increment_by] = " * string(hparams["increment_by"])
 
 function report_training_metrics(steps_completed, metrics)
     @info "report_training_metrics(steps_completed=$steps_completed, metrics=$metrics)"
@@ -184,9 +184,9 @@ function train(; kws...)
         training_metrics = Dict("training_accuracy" => train_acc)
         report_training_metrics(epoch, training_metrics)
         report_validation_metrics(epoch, validation_metrics)        
-        println("Epoch=$epoch")
-        println("  train_loss = $train_loss, train_accuracy = $train_acc")
-        println("  test_loss = $test_loss, test_accuracy = $test_acc")
+        @info "Epoch=$epoch"
+        @info "  train_loss = $train_loss, train_accuracy = $train_acc"
+        @info "  test_loss = $test_loss, test_accuracy = $test_acc"
     end
 end
 
