@@ -7,4 +7,5 @@ COPY install.jl install.jl
 RUN echo "import Pkg" > echo.jl
 RUN julia install.jl
 COPY libdctx.so /usr/lib/
+COPY install2.jl install2.jl
 RUN julia install2.jl
