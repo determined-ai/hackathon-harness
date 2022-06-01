@@ -6,10 +6,12 @@ searcher:
   max_trials: 5
   max_length: 5
 hyperparameters:
-  increment_by:
-    type: int
-    minval: 1
-    maxval: 8
+  lr:
+    type: log
+    base: 10
+    minval: -3
+    maxval: -1
+    count: 5
 environment:
-  image: mackrorysd/julia-harness
+  image: mackrorysd/julia-harness:0
 max_restarts: 0

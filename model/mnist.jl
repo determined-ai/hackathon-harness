@@ -8,6 +8,11 @@ using MLDatasets
 using HTTP
 using JSON
 using Random
+using AWSS3
+using AWS # for `global_aws_config`
+using Flux: loadmodel!
+using BSON
+using BSON: @save
 
 include("../logging.jl")
 
@@ -19,7 +24,8 @@ experiment_id = ENV["DET_EXPERIMENT_ID"]
 
 hparams = JSON.parse(ENV["DET_HPARAMS"])
 
-println(hparams["increment_by"])
+p = S3Path("s3://det-no-py-harness-hackathon-us-west-2-573932760021/model.txt")  # provides an filesystem-like interface
+aws = global_aws_config(;region="us-west-2") # pass keyword arguments to change defaults
 
 function report_training_metrics(steps_completed, metrics)
     @info "report_training_metrics(steps_completed=$steps_completed, metrics=$metrics)"
@@ -167,7 +173,7 @@ function train(; kws...)
     ps = Flux.params(model) ## model's trainable parameters
     
     ## Optimizer
-    opt = ADAM(args.η)
+    opt = ADAM(hparams["lr"])
     
     ## Training
     for epoch in 1:args.epochs
@@ -188,6 +194,11 @@ function train(; kws...)
         println("  train_loss = $train_loss, train_accuracy = $train_acc")
         println("  test_loss = $test_loss, test_accuracy = $test_acc")
     end
+
+    filename = "model-$(hparams["lr"]).bson"
+    @save filename model
+    data = read(filename)
+    s3_put(aws, "det-no-py-harness-hackathon-us-west-2-573932760021", filename, data)
 end
 
 # ## Run the example 
