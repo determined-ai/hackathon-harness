@@ -17,7 +17,7 @@ experiment_id = ENV["DET_EXPERIMENT_ID"]
 
 hparams = JSON.parse(ENV["DET_HPARAMS"])
 
-println(hparams.increment_by)
+println(hparams["increment_by"])
 
 function report_training_metrics(steps_completed, metrics)
     body = Dict(
