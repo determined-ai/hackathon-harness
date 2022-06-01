@@ -30,8 +30,8 @@ function allgather(ctx, data)
     count = dc_result_count(result)
     results = []
     for i in 1:count
-        ser, len = dc_result_take(i-1)
-        # TODO use the length and pointer to create a Julia byte array
+        bytes, len = dc_result_take(i-1)
+        X = unsafe_wrap(Array{UInt8}, Ptr{UInt8}(bytes), len)
         buf = IOBuffer()
         write(buf, ser)
         ccall(:free, Cvoid, (Ptr{Cvoid},), ser)
