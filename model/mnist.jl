@@ -5,6 +5,50 @@ using Flux.Losses: logitcrossentropy
 using Base: @kwdef
 using CUDA
 using MLDatasets
+using HTTP
+using JSON
+using Random
+
+master_url = ENV["DET_MASTER"]
+token = ENV["DET_SESSION_TOKEN"]
+trial_run_id = ENV["DET_TRIAL_RUN_ID"]
+trial_id = ENV["DET_TRIAL_ID"]
+experiment_id = ENV["DET_EXPERIMENT_ID"]
+
+hparams = JSON.parse(ENV["DET_HPARAMS"])
+
+println(hparams.increment_by)
+
+function report_training_metrics(steps_completed, metrics)
+    body = Dict(
+        "trial_run_id" => trial_run_id,
+        "steps_completed" => steps_completed,
+        "metrics" => metrics
+    ) 
+    r = HTTP.request(
+        "POST", 
+        "$(master_url)/api/v1/trials/$(trial_id)/training_metrics", 
+        headers, 
+        body=JSON.json(body)
+    )
+end
+
+function report_validation_metrics(steps_completed, metrics)
+    body = Dict(
+        "trial_run_id" => trial_run_id,
+        "steps_completed" => steps_completed,
+        "metrics" => metrics
+    ) 
+    r = HTTP.request(
+        "POST", 
+        "$(master_url)/api/v1/trials/$(trial_id)/validation_metrics", 
+        headers, 
+        body=JSON.json(body)
+    ) 
+end
+
+headers = Dict("Grpc-Metadata-x-allocation-token" => "Bearer $(token)")
+
 
 # We set default values for learning rate, batch size, epochs, and the usage of a GPU (if available) for the model:
 
@@ -132,6 +176,10 @@ function train(; kws...)
         ## Report on train and test
         train_loss, train_acc = loss_and_accuracy(train_loader, model, device)
         test_loss, test_acc = loss_and_accuracy(test_loader, model, device)
+        validation_metrics = Dict("validation_accuracy" => test_acc)
+        training_metrics = Dict("training_accuracy" => train_acc)
+        report_training_metrics(epoch, training_metrics)
+        report_validation_metrics(epoch, validation_metrics)        
         println("Epoch=$epoch")
         println("  train_loss = $train_loss, train_accuracy = $train_acc")
         println("  test_loss = $test_loss, test_accuracy = $test_acc")
