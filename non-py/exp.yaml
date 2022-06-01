@@ -1,0 +1,15 @@
+name: julia-core-api
+entrypoint: julia diffeq-base.jl
+
+# Use the single-searcher to run just one instance of the training script
+searcher:
+   name: single
+   # metric is required but it shouldn't hurt to ignore it at this point.
+   metric: x
+   # max_length is ignored if the training script ignores it.
+   max_length: 1
+
+# environment:
+#   image: julia:1.7.3-buster
+
+max_restarts: 0
