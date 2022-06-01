@@ -14,5 +14,8 @@ function dctx_close(ctx)
     ccall((:dctx_close, "libdctx"), Cvoid, (Ptr{Cvoid},), ctx)
 end
 
-ctx = dctx_open(0, 2, 0, 2, 0, 1, "localhost:1234", 0)
-dctx_close(ctx)
+chief = dctx_open(0, 2, 0, 2, 0, 1, "localhost:1234", 0)
+worker = dctx_open(1, 2, 1, 2, 0, 1, "localhost:1234", 0)
+sleep(1)
+dctx_close(chief)
+dctx_close(worker)
