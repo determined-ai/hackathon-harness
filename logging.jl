@@ -37,3 +37,8 @@ end
 using Logging
 logger = ConsoleLogger(stderr, Logging.Debug, meta_formatter=log_metafmt)
 global_logger(logger)
+
+@debug "debug-level message"
+@info "info-level message"
+@warn "warn-level message"
+@error "error-level message"
