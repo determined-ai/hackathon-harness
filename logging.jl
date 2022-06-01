@@ -18,15 +18,22 @@
 # Julia
 #
 function log_metafmt(level, _module, group, id, file, line)
-    "$level: [$id] $group: $line\n"
+    pid = getpid()
+    prefix =  uppercase(string(level)) * ": [$pid] $_module:"
+    color = :normal
+
+    ##
+    ## Uncomment for color-coded logging lines
+    ##
+    # color = level < Logging.Info  ? Base.debug_color() :
+    #     level < Logging.Warn  ? Base.info_color()  :
+    #     level < Logging.Error ? Base.warn_color()  :
+    #                     Base.error_color()
+
+    return color, prefix, ""
 end
 
 
 using Logging
 logger = ConsoleLogger(stderr, Logging.Debug, meta_formatter=log_metafmt)
 global_logger(logger)
-
-@debug "debug-level message"
-@info "info-level message"
-@warning "warning-level message"
-@error "error-level message"
