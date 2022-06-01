@@ -19,7 +19,7 @@
 #
 function log_metafmt(level, _module, group, id, file, line)
     pid = getpid()
-    prefix =  uppercase(string(level)) * ": [$pid] $_module:"
+    prefix =  uppercase(string(level)) * ": [$pid] $group:"
     color = :normal
 
     ##
