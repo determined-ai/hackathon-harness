@@ -24,7 +24,6 @@ experiment_id = ENV["DET_EXPERIMENT_ID"]
 
 hparams = JSON.parse(ENV["DET_HPARAMS"])
 
-p = S3Path("s3://det-no-py-harness-hackathon-us-west-2-573932760021/model.txt")  # provides an filesystem-like interface
 aws = global_aws_config(;region="us-west-2") # pass keyword arguments to change defaults
 
 # Distributed computing primitives
@@ -50,6 +49,8 @@ chiefIP = ENV["CHIEF_IP"]
 ctx = dctx_open(rank, size, rank, size, 0, 1, chief_ip, "1234")
 sleep(1)
 dctx_close(ctx)
+
+@debug "hparams[increment_by] = " * string(hparams["increment_by"])
 
 function report_training_metrics(steps_completed, metrics)
     @info "report_training_metrics(steps_completed=$steps_completed, metrics=$metrics)"
@@ -214,9 +215,9 @@ function train(; kws...)
         training_metrics = Dict("training_accuracy" => train_acc)
         report_training_metrics(epoch, training_metrics)
         report_validation_metrics(epoch, validation_metrics)        
-        println("Epoch=$epoch")
-        println("  train_loss = $train_loss, train_accuracy = $train_acc")
-        println("  test_loss = $test_loss, test_accuracy = $test_acc")
+        @info "Epoch=$epoch"
+        @info "  train_loss = $train_loss, train_accuracy = $train_acc"
+        @info "  test_loss = $test_loss, test_accuracy = $test_acc"
     end
 
     filename = "model-$(hparams["lr"]).bson"

@@ -20,15 +20,15 @@
 function log_metafmt(level, _module, group, id, file, line)
     pid = getpid()
     prefix =  uppercase(string(level)) * ": [$pid] $group:"
-    color = :normal
+    # color = :normal
 
     ##
     ## Uncomment for color-coded logging lines
     ##
-    # color = level < Logging.Info  ? Base.debug_color() :
-    #     level < Logging.Warn  ? Base.info_color()  :
-    #     level < Logging.Error ? Base.warn_color()  :
-    #                     Base.error_color()
+    color = level < Logging.Info  ? Base.debug_color() :
+        level < Logging.Warn  ? Base.info_color()  :
+        level < Logging.Error ? Base.warn_color()  :
+                        Base.error_color()
 
     return color, prefix, ""
 end
