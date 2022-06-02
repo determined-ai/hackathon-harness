@@ -88,15 +88,20 @@ struct dctx {
     uv_async_t async;
     // XXX: track when main tcp needs closing still?
     uv_tcp_t tcp;
+    bool tcp_open;
     struct dc_unmarshal unmarshal;
 
     // XXX: I think a should always be mutex protected
+    // Well... I think some things are written in one direction only, so only
+    // have to be locked when writing, or when reading from the other direction.
+    // a.ready is like that.
     struct {
         bool started;
         bool close;
         enum dc_op_type op_type;
         union dc_op op;
         bool op_done;
+        bool ready;
     } a;
 
     struct {
@@ -104,6 +109,7 @@ struct dctx {
         struct dc_conn *preinit;
         // connections of known rank
         struct dc_conn **peers;
+        size_t npeers;
         // we only allow one message per peer at a time
         char **buf;
         size_t *len;
@@ -117,10 +123,7 @@ struct dctx {
         struct addrinfo *ptr;
         uv_connect_t conn_req;
         uv_timer_t timer;
-
-        struct {
-        } gather;
-
+        bool connected;
     } client;
 
     // called on failed read or failed write

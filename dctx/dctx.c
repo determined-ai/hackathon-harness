@@ -114,6 +114,22 @@ void advance_state(struct dctx *dctx){
         pthread_mutex_unlock(&dctx->mutex);
     }
 
+    // don't allow any writes while we are waiting for peers to connect still
+    if(!dctx->a.ready){
+        if(dctx->rank == 0){
+            // chief checks all peers are connected
+            if(dctx->server.npeers + 1 < (size_t)dctx->size) return;
+        }else{
+            // worker checks if it has connected to chief
+            if(!dctx->client.connected) return;
+        }
+
+        pthread_mutex_lock(&dctx->mutex);
+        dctx->a.ready = true;
+        pthread_cond_broadcast(&dctx->cond);
+        pthread_mutex_unlock(&dctx->mutex);
+    }
+
     if(dctx->a.op_type == DC_OP_GATHER && !dctx->a.op_done){
         // gather
         if(dctx->rank == 0){
@@ -250,12 +266,6 @@ int dctx_open(
         return 2;
     }
 
-    ret = uv_tcp_init(&dctx->loop, &dctx->tcp);
-    if(ret < 0){
-        uv_perror("uv_tcp_init", ret); // TODO
-        return 2;
-    }
-
     ret = pthread_mutex_init(&dctx->mutex, NULL);
     if(ret != 0){
         perror("pthread_mutex_init"); // TODO
@@ -338,7 +348,10 @@ void close_everything(struct dctx *dctx){
     // close the async
     uv_close((uv_handle_t*)&dctx->async, noop_handle_closer);
     // close the main tcp
-    uv_close((uv_handle_t*)&dctx->tcp, noop_handle_closer);
+    if(dctx->tcp_open){
+        uv_close((uv_handle_t*)&dctx->tcp, noop_handle_closer);
+        dctx->tcp_open = false;
+    }
     if(dctx->rank == 0){
         // chief closes preinit tcps
         struct dc_conn *ptr = dctx->server.preinit;

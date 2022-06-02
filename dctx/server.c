@@ -56,7 +56,6 @@ int bind_via_gai(uv_tcp_t *srv, const char *addr, const char *svc){
         fprintf(
             stderr, "getaddrinfo(%s:%s): %s\n", addr, svc, gai_strerror(ret)
         );
-        printf("gai failed\n");
         return 1;
     }
 
@@ -202,8 +201,10 @@ static void on_unmarshal(struct dc_unmarshal *u, void *arg){
         }
         // store conn at the right rank
         dctx->server.peers[i] = conn;
+        dctx->server.npeers++;
         conn->rank = i;
         // rprintf("promoted peer=%d\n", i);
+        advance_state(dctx);
         return;
     }
 
@@ -260,6 +261,7 @@ int init_server(struct dctx *dctx){
         uv_perror("uv_tcp_init", ret);
         return 1;
     }
+    dctx->tcp_open = true;
 
     // chief, bind and listen
     ret = bind_via_gai(&dctx->tcp, dctx->host, dctx->svc);

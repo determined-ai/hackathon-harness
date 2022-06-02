@@ -85,7 +85,6 @@ void conn_cb(uv_connect_t *req, int status){
     }
 
     // rprintf("connection made!\n");
-
     uv_freeaddrinfo(dctx->client.gai);
     dctx->client.gai = NULL;
 
@@ -99,6 +98,10 @@ void conn_cb(uv_connect_t *req, int status){
     int ret = tcp_write_copy(&dctx->tcp, buf, 5);
     if(ret) goto fail;
 
+    // now we should be promoted to being a peer
+    dctx->client.connected = true;
+    advance_state(dctx);
+
     return;
 
 fail:
@@ -109,6 +112,7 @@ fail:
 void close_for_retry(struct dctx *dctx){
     // XXX: this makes it unsafe to call close_everything
     uv_close((uv_handle_t*)&dctx->tcp, close_for_retry_cb);
+    dctx->tcp_open = false;
 }
 
 void close_for_retry_cb(uv_handle_t *handle){
@@ -118,8 +122,11 @@ void close_for_retry_cb(uv_handle_t *handle){
         uv_perror("uv_tcp_init", ret);
         goto fail;
     }
+    dctx->tcp_open = true;
     ret = conn_next(dctx);
     if(ret) goto fail;
+
+    return;
 
 fail:
     dctx->failed = true;
@@ -136,7 +143,7 @@ int retry_later(struct dctx *dctx){
 }
 
 void retry_cb(uv_timer_t *handle){
-    struct dctx *dctx = handle->data;
+    struct dctx *dctx = handle->loop->data;
 
     int ret = start_gai(dctx);
     if(ret){
@@ -164,6 +171,13 @@ int init_client(struct dctx *dctx){
     int ret = uv_tcp_init(&dctx->loop, &dctx->tcp);
     if(ret < 0){
         uv_perror("uv_tcp_init", ret);
+        return 1;
+    }
+    dctx->tcp_open = true;
+
+    ret = uv_timer_init(&dctx->loop, &dctx->client.timer);
+    if(ret < 0){
+        uv_perror("uv_timer_init", ret);  // TODO
         return 1;
     }
 

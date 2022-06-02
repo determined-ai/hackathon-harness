@@ -189,9 +189,6 @@ static int test_dctx(void){
         return 1;
     }
 
-    // HACK: allow connections to occur
-    usleep(100000);
-
     ASSERT(dctx_gather_start(chief, strdup("chief"), 5) == 0);
     ASSERT(dctx_gather_start(worker1, strdup("worker1"), 7) == 0);
     ASSERT(dctx_gather_start(worker2, strdup("worker 2"), 8) == 0);
