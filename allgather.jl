@@ -2,11 +2,11 @@
 using Printf
 
 # int dctx_gather_start(struct dctx *dctx, char *data, size_t len);
-function dctx_gather_start(ctx, data, len)
+function dctx_gather_start(ctx, data)
     @printf("gather_start\n");
     status = @threadcall((:dctx_gather_start, "libdctx"), Cint,
         (Ptr{Cvoid}, Ptr{UInt8}, Csize_t),
-        ctx, data, len)
+        ctx, data, length(data))
     @printf("gather_start done\n");
     return status
 end
@@ -37,7 +37,9 @@ function dc_result_take(dc_result, i)
     data = @threadcall((:dc_result_take, "libdctx"), Ptr{UInt8},
                        (Ptr{Cvoid}, Csize_t, Ptr{Csize_t}),
                        dc_result, i, len)
-    return data, len[]
+    #  @printf("data[0]=%d\n", Int(unsafe_load(data)));
+    return unsafe_string(data, len[])
+    # return data, len[]
 end
 
 # void dc_result_free(struct dc_result **r);
@@ -96,17 +98,17 @@ chief_string = "chief"
 worker1_string = "worker1"
 worker2_string = "worker 2"
 
-dctx_gather_start(chief, pointer_from_objref(chief_string), 5)
+dctx_gather_start(chief, chief_string)
 # @printf("%d\n", x)
 # if x != 0
 #     error("non-zero returned by dctx_gather_start on chief")
 # end
 
-if dctx_gather_start(worker1, pointer_from_objref(worker1_string), 7) != 0
+if dctx_gather_start(worker1, worker1_string) != 0
     error("non-zero returned by dctx_gather_start on worker1")
 end
 
-if dctx_gather_start(worker2, pointer_from_objref(worker2_string), 8) != 0
+if dctx_gather_start(worker2, worker2_string) != 0
     error("non-zero returned by dctx_gather_start on worker2")
 end
 
@@ -146,27 +148,28 @@ if dc_result_count(w2) != 0
     error("expected zero result on worker 2")
 end
 
-# @printf("takes\n");
-#
-# data, len = dc_result_take(c, 0)
-# if len != 5
-#     error("Unexpected len of first result on chief")
-#     free(data)
-# end
-# @printf("chief data: %.5s", *data)
-# if data != "chief"
-#     error("Unexpected first result on chief")
-#     free(data)
-# end
-# data, len = dc_result_take(c, 1);
-# if len != 7 or data != "worker1"
-#     error("Unexpected second result on chief")
-#     free(data)
-# end
-# if len != 8 or data != "worker 2"
-#     error("Unexpected third result on chief")
-#     free(data)
-# end=#
+@printf("takes\n");
+
+data = dc_result_take(c, 0)
+@printf("chief data: %s\n", data)
+if data != "chief"
+    error("Unexpected first result on chief")
+    free(data)
+end
+
+data = dc_result_take(c, 1)
+@printf("worker1 data: %s\n", data)
+if data != "worker1"
+    error("Unexpected second result on chief")
+    free(data)
+end
+
+data = dc_result_take(c, 2)
+@printf("worker2 data: %s\n", data)
+if data != "worker 2"
+    error("Unexpected third result on chief")
+    free(data)
+end
 
 dctx_close(chief)
 dctx_close(worker1)

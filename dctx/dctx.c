@@ -36,6 +36,7 @@ char *dc_result_take(struct dc_result *r, size_t i, size_t *len){
     r->data[i] = NULL;
     r->len[i] = 0;
     if(len) *len = lout;
+    // printf("dc_result_take returning out[0] = %d\n", (int)out[0]);
     return out;
 }
 
@@ -629,6 +630,13 @@ int dctx_gather_start(struct dctx *dctx, char *data, size_t len){
     char *newdata = malloc(len);
     memcpy(newdata, data, len);
     data = newdata;
+
+    // printf("dctx_gather_start(");
+    // for(size_t i = 0; i<len; i++){
+    //     printf("%s%.2x", i?" ":"", (int)data[i]);
+    // }
+    // printf(")\n");
+
     rprintf("locking mutex\n");
     pthread_mutex_lock(&dctx->mutex);
     rprintf("locked mutex\n");
