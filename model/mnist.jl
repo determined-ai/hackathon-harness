@@ -27,6 +27,30 @@ hparams = JSON.parse(ENV["DET_HPARAMS"])
 p = S3Path("s3://det-no-py-harness-hackathon-us-west-2-573932760021/model.txt")  # provides an filesystem-like interface
 aws = global_aws_config(;region="us-west-2") # pass keyword arguments to change defaults
 
+# Distributed computing primitives
+function dctx_open(rank, size, local_rank, local_size, cross_rank, cross_size, chief_host, chief_service)
+    ctx = Ref{Ptr{Cvoid}}()
+    ret = ccall((:dctx_open, "libdctx"), Int32,
+        (Ptr{Cvoid}, Int32, Int32, Int32, Int32, Int32, Int32, Cstring, Cstring),
+        ctx, rank, size, local_rank, local_size, cross_rank, cross_size, chief_host, chief_service
+    )
+    if ret != 0
+        error("non-zero status returned")
+    end
+    return ctx
+end
+
+function dctx_close(ctx)
+    ccall((:dctx_close, "libdctx"), Cvoid, (Ptr{Cvoid},), ctx)
+end
+
+rank = parse(Int,ENV["RANK"])
+size = parse(Int,ENV["SIZE"])
+chiefIP = ENV["CHIEF_IP"]
+ctx = dctx_open(rank, size, rank, size, 0, 1, chief_ip, "1234")
+sleep(1)
+dctx_close(ctx)
+
 function report_training_metrics(steps_completed, metrics)
     @info "report_training_metrics(steps_completed=$steps_completed, metrics=$metrics)"
     body = Dict(

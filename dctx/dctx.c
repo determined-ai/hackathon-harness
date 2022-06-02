@@ -596,7 +596,11 @@ fail:
 }
 
 int dctx_gather_start(struct dctx *dctx, char *data, size_t len){
+    char *newdata = malloc(len);
+    memcpy(newdata, data, len);
+    rprintf("locking mutex\n");
     pthread_mutex_lock(&dctx->mutex);
+    rprintf("locked mutex\n");
     if(dctx->a.op_type != DC_OP_NONE){
         fprintf(stderr, "other op in progress\n");
         goto fail;
@@ -613,14 +617,18 @@ int dctx_gather_start(struct dctx *dctx, char *data, size_t len){
         dctx->a.op.gather_worker.len = len;
         data = NULL;
     }
+    rprintf("async send\n");
     uv_async_send(&dctx->async);
+    rprintf("async sent\n");
 
+    rprintf("unlocking mutex\n");
     pthread_mutex_unlock(&dctx->mutex);
+    rprintf("unlocked mutex\n");
     return 0;
 
 fail:
     pthread_mutex_unlock(&dctx->mutex);
-    //free(data);
+    free(data);
     return 1;
 }
 

@@ -1,31 +1,41 @@
+
 using Printf
 
+# int dctx_gather_start(struct dctx *dctx, char *data, size_t len);
 function dctx_gather_start(ctx, data, len)
-    ccall((:dctx_gather_start, "libdctx"), Cint,
+    @printf("gather_start\n");
+    @threadcall((:dctx_gather_start, "libdctx"), Cint,
         (Ptr{Cvoid}, Ptr{UInt8}, Csize_t),
         ctx, data, len)
+    @printf("gather_end\n");
 end
 
+# struct dc_result *dctx_gather_end(struct dctx *dctx);
 function dctx_gather_end(ctx)
-    ccall((:dctx_gather_end, "libdctx"), Ptr{Cvoid}, (Ptr{Cvoid},), ctx)
+    @threadcall((:dctx_gather_end, "libdctx"), Ptr{Cvoid}, (Ptr{Cvoid},), ctx)
 end
 
+# bool dc_result_ok(struct dc_result *r);
 function dc_result_ok(dc_result)
-    ccall((:dc_result_ok, "libdctx"), Cuchar, (Ptr{Cvoid},), dc_result)
+    @threadcall((:dc_result_ok, "libdctx"), Cuchar, (Ptr{Cvoid},), dc_result)
 end
 
+# size_t dc_result_count(struct dc_result *r);
 function dc_result_count(dc_result)
-    ccall((:dc_result_count, "libdctx"), Csize_t, (Ptr{Cvoid},), dc_result)
+    @threadcall((:dc_result_count, "libdctx"), Csize_t, (Ptr{Cvoid},), dc_result)
 end
 
+# char *dc_result_take(struct dc_result *r, size_t i, size_t *len);
 function dc_result_take(dc_result, i)
     len = 0
-    data = ccall((:dc_result_take, "libdctx"), Ptr{UInt8}, (Ptr{Cvoid}, Csize_t, Ptr{Csize_t}), dc_result, i, len)
+    data = @threadcall((:dc_result_take, "libdctx"), Ptr{UInt8}, (Ptr{Cvoid}, Csize_t, Ptr{Csize_t}), dc_result, i, len)
     return data, len
 end
 
+# void dc_result_free(struct dc_result **r);
+
 function free(ptr)
-    #ccall(:free, Cvoid, (Ptr{Cvoid},), ptr)
+    #@threadcall(:free, Cvoid, (Ptr{Cvoid},), ptr)
 end
 
 function gather(ctx, data)
@@ -47,7 +57,7 @@ function gather(ctx, data)
         X = unsafe_wrap(Array{UInt8}, Ptr{UInt8}(bytes), len)
         buf = IOBuffer()
         write(buf, ser)
-        ccall(:free, Cvoid, (Ptr{Cvoid},), ser)
+        @threadcall(:free, Cvoid, (Ptr{Cvoid},), ser)
         push!(results, deserialize(buf))
     end
     return results
@@ -55,7 +65,7 @@ end
 
 function dctx_open(rank, size, local_rank, local_size, cross_rank, cross_size, chief_host, chief_service)
     ctx = Ref{Ptr{Cvoid}}()
-    ret = ccall((:dctx_open, "libdctx"), Int32,
+    ret = @threadcall((:dctx_open, "libdctx"), Int32,
         (Ptr{Cvoid}, Int32, Int32, Int32, Int32, Int32, Int32, Cstring, Cstring),
         ctx, rank, size, local_rank, local_size, cross_rank, cross_size, chief_host, chief_service
     )
@@ -66,10 +76,10 @@ function dctx_open(rank, size, local_rank, local_size, cross_rank, cross_size, c
 end
 
 function dctx_close(ctx)
-    ccall((:dctx_close, "libdctx"), Cvoid, (Ptr{Cvoid},), ctx)
+    @threadcall((:dctx_close, "libdctx"), Cvoid, (Ptr{Cvoid},), ctx)
 end
 
-chief   = dctx_open(0, 3, 0, 3, 0, 1, "0.0.0.0", "1234")
+chief   = dctx_open(0, 3, 0, 3, 0, 1, "localhost", "1234")
 worker1 = dctx_open(1, 3, 1, 3, 0, 1, "localhost", "1234")
 worker2 = dctx_open(2, 3, 2, 3, 0, 1, "localhost", "1234")
 
@@ -92,6 +102,8 @@ end
 if dctx_gather_start(worker2, pointer_from_objref(worker2_string), 8) != 0
     error("non-zero returned by dctx_gather_start on worker2")
 end
+
+sleep(5)
 
 c = dctx_gather_end(chief)
 w1 = dctx_gather_end(worker1)
@@ -130,7 +142,8 @@ end
 if len != 8 or data != "worker 2"
     error("Unexpected third result on chief")
     free(data)
-end
+end=#
 
 dctx_close(chief)
-dctx_close(worker)
+dctx_close(worker1)
+dctx_close(worker2)

@@ -169,7 +169,7 @@ static int test_dctx(void){
     char *data = NULL;
 
     struct dctx *chief;
-    int ret = dctx_open(&chief, 0, 3, 0, 3, 0, 1, "0.0.0.0", "1234");
+    int ret = dctx_open(&chief, 0, 3, 0, 3, 0, 1, "localhost", "1234");
     if(ret){
         printf("dctx_open failed! %d\n", ret);
         return 1;

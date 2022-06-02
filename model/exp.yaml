@@ -1,5 +1,5 @@
 name: julia-core-api
-entrypoint: julia mnist.jl
+entrypoint: python launch.py julia mnist.jl
 searcher:
   name: random
   metric: validation_accuracy
