@@ -188,6 +188,32 @@ static void async_cb(uv_async_t *handle){
     advance_state(dctx);
 }
 
+struct dctx *dctx_open2(
+    int rank,
+    int size,
+    int local_rank,
+    int local_size,
+    int cross_rank,
+    int cross_size,
+    const char *chief_host,
+    const char *chief_svc
+){
+    struct dctx *out;
+    int ret = dctx_open(
+        &out,
+        rank,
+        size,
+        local_rank,
+        local_size,
+        cross_rank,
+        cross_size,
+        chief_host,
+        chief_svc
+    );
+    if(ret) return NULL;
+    return out;
+}
+
 int dctx_open(
     struct dctx **dctx_out,
     int rank,
@@ -301,6 +327,11 @@ int dctx_open(
 void dctx_close(struct dctx **dctxptr){
     struct dctx *dctx = *dctxptr;
     if(!dctx) return;
+    dctx_close2(dctx);
+    *dctxptr = NULL;
+}
+
+void dctx_close2(struct dctx *dctx){
     rprintf("dctx_close!\n");
 
     // ask the loop to shutdown
@@ -337,7 +368,6 @@ void dctx_close(struct dctx **dctxptr){
     free(dctx->host);
     free(dctx->svc);
     free(dctx);
-    *dctxptr = NULL;
 }
 
 void noop_handle_closer(uv_handle_t *handle){
