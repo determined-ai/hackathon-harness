@@ -1,0 +1,3 @@
+bind_mounts:
+  - host_path: /var/run/docker.sock
+    container_path: /var/run/docker.sock

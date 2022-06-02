@@ -1,0 +1,1 @@
+det command run --config-file launch-config.yml --context=. ./make-docker.sh
