@@ -9,4 +9,4 @@ RUN julia install.jl
 COPY libdctx.so /usr/lib/
 COPY install2.jl install2.jl
 RUN julia install2.jl
-COPY logging.jl logging.jl
+COPY logging.jl /run/determined/logging.jl

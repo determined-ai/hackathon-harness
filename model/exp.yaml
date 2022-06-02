@@ -13,5 +13,5 @@ hyperparameters:
     maxval: -1
     count: 5
 environment:
-  image: mackrorysd/julia-harness:0
+  image: mackrorysd/julia-harness:3
 max_restarts: 0
