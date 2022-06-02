@@ -46,7 +46,7 @@ end
 rank = parse(Int,ENV["RANK"])
 size = parse(Int,ENV["SIZE"])
 chiefIP = ENV["CHIEF_IP"]
-ctx = dctx_open(rank, size, rank, size, 0, 1, chief_ip, "1234")
+ctx = dctx_open(rank, size, rank, size, 0, 1, chiefIP, "1234")
 sleep(1)
 dctx_close(ctx)
 
