@@ -620,7 +620,7 @@ int dctx_gather_start(struct dctx *dctx, char *data, size_t len){
 
 fail:
     pthread_mutex_unlock(&dctx->mutex);
-    free(data);
+    //free(data);
     return 1;
 }
 
