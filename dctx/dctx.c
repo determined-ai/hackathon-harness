@@ -628,6 +628,7 @@ fail:
 int dctx_gather_start(struct dctx *dctx, char *data, size_t len){
     char *newdata = malloc(len);
     memcpy(newdata, data, len);
+    data = newdata;
     rprintf("locking mutex\n");
     pthread_mutex_lock(&dctx->mutex);
     rprintf("locked mutex\n");
