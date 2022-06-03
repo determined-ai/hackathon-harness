@@ -1,7 +1,14 @@
 using Printf
+using Serialization
 
 # int dctx_gather_start(struct dctx *dctx, char *data, size_t len);
-function dctx_gather_start(ctx, data)
+function dctx_gather_start(ctx, obj)
+    # serialize the object
+    io = IOBuffer()
+    serialize(io, obj)
+    # get the contentx of the buffer (without a copy)
+    data = take!(io)
+    # call dctx_gather_start with the serialized data
     status = ccall((:dctx_gather_start, "libdctx"), Cint,
         (Ptr{Cvoid}, Ptr{UInt8}, Csize_t),
         ctx, data, length(data))
@@ -13,30 +20,37 @@ end
 # struct dc_result *dctx_gather_end(struct dctx *dctx);
 function dctx_gather_end(ctx)
     dc_result = ccall((:dctx_gather_end, "libdctx"), Ptr{Cvoid}, (Ptr{Cvoid},), ctx)
+    try
+        ok = ccall((:dc_result_ok, "libdctx"), Cuchar, (Ptr{Cvoid},), dc_result)
+        if ok != 1
+            error("distributed result was not ok")
+        end
 
-    # check status
-    ok = ccall((:dc_result_ok, "libdctx"), Cuchar, (Ptr{Cvoid},), dc_result)
-    if ok != 1
-        error("distributed result was not ok")
+        count = ccall((:dc_result_count, "libdctx"), Csize_t, (Ptr{Cvoid},), dc_result)
+
+        # allocate vector output
+        out = Vector{Any}(undef, count)
+
+        # Set each output
+        for i = 1:count
+            len = Ref(UInt64(0))
+            data = ccall((:dc_result_take, "libdctx"), Ptr{UInt8},
+                               (Ptr{Cvoid}, Csize_t, Ptr{Csize_t}),
+                               dc_result, i-1, len)
+            # tell julia to take ownership of the buffer, as a UInt8
+            jldata = unsafe_wrap(Array{UInt8}, data, len[], own=true)
+            # create a read-only IOBuffer around the array
+            io = IOBuffer(jldata, read=true, write=false, append=false)
+            # deserialize the data we got
+            obj = deserialize(io)
+            out[i] = obj
+        end
+
+        return out
+
+    finally
+        ccall((:dc_result_free2, "libdctx"), Cvoid, (Ptr{Cvoid},), dc_result)
     end
-
-    count = ccall((:dc_result_count, "libdctx"), Csize_t, (Ptr{Cvoid},), dc_result)
-
-    # allocate vector output
-    out = Vector{String}(undef, count)
-
-    # Set each output
-    for i = 1:count
-        len = Ref(UInt64(0))
-        data = ccall((:dc_result_take, "libdctx"), Ptr{UInt8},
-                           (Ptr{Cvoid}, Csize_t, Ptr{Csize_t}),
-                           dc_result, i-1, len)
-        out[i] = unsafe_string(data, len[])
-    end
-
-    # TODO: dc_result_free
-
-    return out
 end
 
 function free(ptr)
@@ -89,13 +103,9 @@ worker2 = dctx_open(2, 3, 2, 3, 0, 1, "localhost", "1234")
 
 sleep(1)
 
-chief_string = "chief"
-worker1_string = "worker1"
-worker2_string = "worker 2"
-
-dctx_gather_start(chief, chief_string)
-dctx_gather_start(worker1, worker1_string)
-dctx_gather_start(worker2, worker2_string)
+dctx_gather_start(chief, "chief")
+dctx_gather_start(worker1, "worker1")
+dctx_gather_start(worker2, ["worker", 2])
 
 @printf("sleeping\n");
 

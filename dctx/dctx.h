@@ -5,6 +5,7 @@
 struct dc_result;
 // succesful results (ok == true) MUST be freed
 void dc_result_free(struct dc_result **r);
+void dc_result_free2(struct dc_result *r);
 // if result is not ok, you MAY skip freeing the result
 bool dc_result_ok(struct dc_result *r);
 // check how many data are being returned

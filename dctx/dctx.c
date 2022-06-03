@@ -9,6 +9,11 @@ struct dc_result OK_EMPTY = { .ok = true };
 
 void dc_result_free(struct dc_result **rptr) {
     struct dc_result *r = *rptr;
+    dc_result_free2(r);
+    *rptr = NULL;
+}
+
+void dc_result_free2(struct dc_result *r) {
     if(r == NULL || r == &NOT_OK || r == &OK_EMPTY) return;
     if(r->data != NULL){
         for(size_t i = 0; i < r->ndata; i++){
@@ -19,7 +24,6 @@ void dc_result_free(struct dc_result **rptr) {
     }
     if(r->len != NULL) free(r->len);
     free(r);
-    *rptr = NULL;
 }
 
 bool dc_result_ok(struct dc_result *r){
