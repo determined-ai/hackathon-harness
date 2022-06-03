@@ -1,32 +1,98 @@
 using Printf
 using Serialization
 
-# int dctx_gather_start(struct dctx *dctx, char *data, size_t len);
-function dctx_gather_start(ctx, obj)
-    # serialize the object
-    io = IOBuffer()
-    serialize(io, obj)
-    # get the contentx of the buffer (without a copy)
-    data = take!(io)
-    # call dctx_gather_start with the serialized data
-    status = ccall((:dctx_gather_start, "libdctx"), Cint,
-        (Ptr{Cvoid}, Ptr{UInt8}, Csize_t),
-        ctx, data, length(data))
-    if status != 0
-        error("dctx_gather_start failed")
+struct DistributedContext
+    # the C library object
+    _dctx::Ptr{Cvoid}
+    rank::Int
+    size::Int
+    local_rank::Int
+    local_size::Int
+    cross_rank::Int
+    cross_size::Int
+
+    # inner constructor
+    DistributedContext(
+        rank::Int,
+        size::Int,
+        local_rank::Int,
+        local_size::Int,
+        cross_rank::Int,
+        cross_size::Int,
+        chief_host::String,
+        chief_service::String,
+    ) = begin
+        # call the C code to instantiate the thing
+        dctx = ccall(
+            (:dctx_open2, "libdctx"),
+            Ptr{Cvoid},
+            (Int32, Int32, Int32, Int32, Int32, Int32, Cstring, Cstring),
+            rank,
+            size,
+            local_rank,
+            local_size,
+            cross_rank,
+            cross_size,
+            chief_host,
+            chief_service,
+        )
+        if dctx == 0
+            error("dctx not returned")
+        end
+
+        new(dctx, rank, size, local_rank, local_size, cross_rank, cross_size)
     end
 end
 
-# struct dc_result *dctx_gather_end(struct dctx *dctx);
-function dctx_gather_end(ctx)
-    dc_result = ccall((:dctx_gather_end, "libdctx"), Ptr{Cvoid}, (Ptr{Cvoid},), ctx)
+mutable struct DistributedGather
+    # the C library object
+    _dctx::Ptr{Cvoid}
+
+    # hold a reference to the bytes we pass into dctx_gather_start_nofree, so
+    # they aren't GC'd before it is sent over the wire
+    _preserve::Ref
+end
+
+close(dctx::DistributedContext) = begin
+    ccall((:dctx_close2, "libdctx"), Cvoid, (Ptr{Cvoid},), dctx._dctx)
+end
+
+gather_start(dctx::DistributedContext, obj::Any) = begin
+    # serialize the object
+    io = IOBuffer()
+    serialize(io, obj)
+    # get the content of the buffer (without a copy)
+    data = take!(io)
+    # call dctx_gather_start with the serialized data
+    status = ccall((:dctx_gather_start_nofree, "libdctx"), Cint,
+        (Ptr{Cvoid}, Ptr{UInt8}, Csize_t),
+        dctx._dctx, data, length(data))
+    if status != 0
+        error("dctx_gather_start failed")
+    end
+
+    DistributedGather(dctx._dctx, Ref(data))
+end
+
+gather_end(dctx::DistributedGather) = begin
+    # use @threadcall intead of ccall to avoid blocking the rest of julia
+    dc_result = @threadcall(
+        (:dctx_gather_end, "libdctx"), Ptr{Cvoid}, (Ptr{Cvoid},), dctx._dctx
+    )
     try
-        ok = ccall((:dc_result_ok, "libdctx"), Cuchar, (Ptr{Cvoid},), dc_result)
+        # done preserving the buffer
+        dctx._preserve = Ref(0)
+
+        ok = ccall(
+            (:dc_result_ok, "libdctx"), Cuchar, (Ptr{Cvoid},), dc_result
+        )
         if ok != 1
             error("distributed result was not ok")
         end
 
-        count = ccall((:dc_result_count, "libdctx"), Csize_t, (Ptr{Cvoid},), dc_result)
+        count = ccall(
+            (:dc_result_count, "libdctx"), Csize_t, (Ptr{Cvoid},), dc_result
+        )
 
         # allocate vector output
         out = Vector{Any}(undef, count)
@@ -38,6 +104,7 @@ function dctx_gather_end(ctx)
                                (Ptr{Cvoid}, Csize_t, Ptr{Csize_t}),
                                dc_result, i-1, len)
             # tell julia to take ownership of the buffer, as a UInt8
+            # (this will cause julia to call free(data) eventually)
             jldata = unsafe_wrap(Array{UInt8}, data, len[], own=true)
             # create a read-only IOBuffer around the array
             io = IOBuffer(jldata, read=true, write=false, append=false)
@@ -53,69 +120,21 @@ function dctx_gather_end(ctx)
     end
 end
 
-function free(ptr)
-    #ccall(:free, Cvoid, (Ptr{Cvoid},), ptr)
+gather(dctx::DistributedContext, obj::Any) = begin
+    gather_end(gather_start(dctx, obj))
 end
 
-function gather(ctx, data)
-    buf = IOBuffer()
-    serialize(buf, data)
-    ser = takebuf_string(io)
-    status = dctx_gather_start(ctx, ser, lastindex(ser))
-    if status != 0
-        error("failed to start gather")
-    end
-    result = dctx_gather_end(ctx)
-    if !dc_result_ok(result)
-        error("distributed result was not ok")
-    end
-    count = dc_result_count(result)
-    results = []
-    for i in 1:count
-        bytes, len = dc_result_take(i-1)
-        X = unsafe_wrap(Array{UInt8}, Ptr{UInt8}(bytes), len)
-        buf = IOBuffer()
-        write(buf, ser)
-        ccall(:free, Cvoid, (Ptr{Cvoid},), ser)
-        push!(results, deserialize(buf))
-    end
-    return results
-end
+chief = DistributedContext(0, 3, 0, 0, 0, 0, "localhost", "1234")
+worker1 = DistributedContext(1, 3, 0, 0, 0, 0, "localhost", "1234")
+worker2 = DistributedContext(2, 3, 0, 0, 0, 0, "localhost", "1234")
 
-function dctx_open(rank, size, local_rank, local_size, cross_rank, cross_size, chief_host, chief_service)
-    ctx = ccall((:dctx_open2, "libdctx"), Ptr{Cvoid},
-        (Int32, Int32, Int32, Int32, Int32, Int32, Cstring, Cstring),
-        rank, size, local_rank, local_size, cross_rank, cross_size, chief_host, chief_service
-    )
-    if ctx == 0
-        error("dctx not returned")
-    end
-    return ctx
-end
+gc = gather_start(chief, "chief")
+gw1 = gather_start(worker1, "worker1")
+gw2 = gather_start(worker2, 2)
 
-function dctx_close(ctx)
-    ccall((:dctx_close2, "libdctx"), Cvoid, (Ptr{Cvoid},), ctx)
-end
-
-chief   = dctx_open(0, 3, 0, 3, 0, 1, "localhost", "1234")
-worker1 = dctx_open(1, 3, 1, 3, 0, 1, "localhost", "1234")
-worker2 = dctx_open(2, 3, 2, 3, 0, 1, "localhost", "1234")
-
-sleep(1)
-
-dctx_gather_start(chief, "chief")
-dctx_gather_start(worker1, "worker1")
-dctx_gather_start(worker2, ["worker", 2])
-
-@printf("sleeping\n");
-
-sleep(1)
-
-@printf("done sleeping\n");
-
-c = dctx_gather_end(chief)
-w1 = dctx_gather_end(worker1)
-w2 = dctx_gather_end(worker2)
+c = gather_end(gc)
+w1 = gather_end(gw1)
+w2 = gather_end(gw2)
 
 print(c)
 print("\n")
@@ -124,6 +143,6 @@ print("\n")
 print(w2)
 print("\n")
 
-dctx_close(chief)
-dctx_close(worker1)
-dctx_close(worker2)
+close(chief)
+close(worker1)
+close(worker2)

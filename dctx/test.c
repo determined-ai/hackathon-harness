@@ -169,29 +169,29 @@ static int test_dctx(void){
     char *data = NULL;
 
     struct dctx *chief;
-    int ret = dctx_open(&chief, 0, 3, 0, 3, 0, 1, "localhost", "1234");
+    int ret = dctx_open(&chief, 0, 3, 0, 0, 0, 0, "localhost", "1234");
     if(ret){
         printf("dctx_open failed! %d\n", ret);
         return 1;
     }
 
     struct dctx *worker1;
-    ret = dctx_open(&worker1, 1, 3, 1, 3, 0, 1, "localhost", "1234");
+    ret = dctx_open(&worker1, 1, 3, 1, 0, 0, 0, "localhost", "1234");
     if(ret){
         printf("dctx_open failed! %d\n", ret);
         return 1;
     }
 
     struct dctx *worker2;
-    ret = dctx_open(&worker2, 2, 3, 2, 3, 0, 1, "localhost", "1234");
+    ret = dctx_open(&worker2, 2, 3, 2, 0, 0, 0, "localhost", "1234");
     if(ret){
         printf("dctx_open failed! %d\n", ret);
         return 1;
     }
 
-    ASSERT(dctx_gather_start(chief, strdup("chief"), 5) == 0);
-    ASSERT(dctx_gather_start(worker1, strdup("worker1"), 7) == 0);
-    ASSERT(dctx_gather_start(worker2, strdup("worker 2"), 8) == 0);
+    ASSERT(dctx_gather_start_nofree(chief, "chief", 5) == 0);
+    ASSERT(dctx_gather_start_nofree(worker1, "worker1", 7) == 0);
+    ASSERT(dctx_gather_start_nofree(worker2, "worker 2", 8) == 0);
     c = dctx_gather_end(chief);
     w1 = dctx_gather_end(worker1);
     w2 = dctx_gather_end(worker2);

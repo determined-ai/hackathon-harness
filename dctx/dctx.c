@@ -153,8 +153,10 @@ void advance_state(struct dctx *dctx){
             // worker
             pthread_mutex_lock(&dctx->mutex);
             char *data = dctx->a.op.gather_worker.data;
+            const char *constdata = dctx->a.op.gather_worker.constdata;
             size_t len = dctx->a.op.gather_worker.len;
             dctx->a.op.gather_worker.data = NULL;
+            dctx->a.op.gather_worker.constdata = NULL;
             pthread_mutex_unlock(&dctx->mutex);
 
             // write header
@@ -169,7 +171,11 @@ void advance_state(struct dctx *dctx){
             if(ret) goto fail;
 
             // write body
-            ret = tcp_write(&dctx->tcp, data, len);
+            if(data){
+                ret = tcp_write(&dctx->tcp, data, len);
+            }else{
+                ret = tcp_write_nofree(&dctx->tcp, constdata, len);
+            }
             if(ret) goto fail;
 
             // done
@@ -373,6 +379,16 @@ void dctx_close2(struct dctx *dctx){
     free(dctx->host);
     free(dctx->svc);
     free(dctx);
+}
+
+char *bytesdup(const char *data, size_t len){
+    char *out = malloc(len);
+    if(!out){
+        perror("malloc");
+        return NULL;
+    }
+    memcpy(out, data, len);
+    return out;
 }
 
 void noop_handle_closer(uv_handle_t *handle){
@@ -597,16 +613,15 @@ fail_base:
 }
 
 int tcp_write_copy(uv_tcp_t *tcp, const char *base, size_t len){
-    char *copy = malloc(len);
+    char *copy = bytesdup(base, len);
     if(!copy){
         perror("malloc");
         return 1;
     }
-    memcpy(copy, base, len);
     return tcp_write(tcp, copy, len);
 }
 
-int tcp_write_nofree(uv_tcp_t *tcp, char *base, size_t len){
+int tcp_write_nofree(uv_tcp_t *tcp, const char *base, size_t len){
     uv_write_t *req = malloc(sizeof(*req));
     if(!req){
         perror("malloc");
@@ -614,7 +629,7 @@ int tcp_write_nofree(uv_tcp_t *tcp, char *base, size_t len){
     }
     req->data = NULL;
 
-    uv_buf_t buf = { .base = base, .len = len };
+    uv_buf_t buf = { .base = i_promise_i_wont_touch(base), .len = len };
 
     int ret = uv_write(req, (uv_stream_t*)tcp, &buf, 1, write_cb);
     if(ret < 0){
@@ -631,19 +646,7 @@ fail:
 }
 
 int dctx_gather_start(struct dctx *dctx, char *data, size_t len){
-    char *newdata = malloc(len);
-    memcpy(newdata, data, len);
-    data = newdata;
-
-    // printf("dctx_gather_start(");
-    // for(size_t i = 0; i<len; i++){
-    //     printf("%s%.2x", i?" ":"", (int)data[i]);
-    // }
-    // printf(")\n");
-
-    rprintf("locking mutex\n");
     pthread_mutex_lock(&dctx->mutex);
-    rprintf("locked mutex\n");
     if(dctx->a.op_type != DC_OP_NONE){
         fprintf(stderr, "other op in progress\n");
         goto fail;
@@ -658,15 +661,10 @@ int dctx_gather_start(struct dctx *dctx, char *data, size_t len){
         // worker
         dctx->a.op.gather_worker.data = data;
         dctx->a.op.gather_worker.len = len;
-        data = NULL;
     }
-    rprintf("async send\n");
     uv_async_send(&dctx->async);
-    rprintf("async sent\n");
 
-    rprintf("unlocking mutex\n");
     pthread_mutex_unlock(&dctx->mutex);
-    rprintf("unlocked mutex\n");
     return 0;
 
 fail:
@@ -674,6 +672,43 @@ fail:
     free(data);
     return 1;
 }
+
+int dctx_gather_start_copy(struct dctx *dctx, const char *data, size_t len){
+    char *copy = bytesdup(data, len);
+    return dctx_gather_start(dctx, copy, len);
+}
+
+int dctx_gather_start_nofree(struct dctx *dctx, const char *data, size_t len){
+    pthread_mutex_lock(&dctx->mutex);
+    if(dctx->a.op_type != DC_OP_NONE){
+        fprintf(stderr, "other op in progress\n");
+        goto fail;
+    }
+    dctx->a.op_type = DC_OP_GATHER;
+
+    if(dctx->rank == 0){
+        // chief
+        dctx->a.op.gather_chief.data = bytesdup(data, len);
+        if(!dctx->a.op.gather_chief.data){
+            goto fail;
+        }
+        dctx->a.op.gather_chief.len = len;
+    }else{
+        // worker
+        dctx->a.op.gather_worker.constdata = data;
+        dctx->a.op.gather_worker.len = len;
+    }
+    uv_async_send(&dctx->async);
+
+    pthread_mutex_unlock(&dctx->mutex);
+    return 0;
+
+fail:
+    pthread_mutex_unlock(&dctx->mutex);
+    return 1;
+}
+
+
 
 struct dc_result *dctx_gather_end(struct dctx *dctx){
     struct dc_result *result = NULL;
@@ -731,12 +766,4 @@ reset:
     dctx->a.op = (union dc_op){};
     pthread_mutex_unlock(&dctx->mutex);
     return result ? result : &NOT_OK;
-}
-
-struct dc_result *dctx_gather(struct dctx *dctx, char *data, size_t len){
-    int ret = dctx_gather_start(dctx, data, len);
-    if(ret){
-        return &NOT_OK;
-    }
-    return dctx_gather_end(dctx);
 }

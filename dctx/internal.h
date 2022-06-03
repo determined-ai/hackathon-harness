@@ -63,11 +63,13 @@ enum dc_op_type {
 
 union dc_op {
     struct {
+        // chief always does a copy, even in the nofree case
         char *data;
         size_t len;
     } gather_chief;
     struct {
         char *data;
+        const char *constdata;
         size_t len;
         bool sent;
     } gather_worker;
@@ -162,12 +164,14 @@ int unmarshal(
 );
 void unmarshal_free(struct dc_unmarshal *unmarshal);
 
+char *bytesdup(const char *data, size_t len);
+
 // will call free(base)
 int tcp_write(uv_tcp_t *tcp, char *base, size_t len);
 // will copy base first, then call tcp_write
 int tcp_write_copy(uv_tcp_t *tcp, const char *base, size_t len);
 // you must guarantee that write_cb is done before freeing base
-int tcp_write_nofree(uv_tcp_t *tcp, char *base, size_t len);
+int tcp_write_nofree(uv_tcp_t *tcp, const char *base, size_t len);
 
 // server
 
@@ -197,3 +201,6 @@ int retry_later(struct dctx *dctx);
 void retry_cb(uv_timer_t *handle);
 
 int init_client(struct dctx *dctx);
+
+// const
+char *i_promise_i_wont_touch(const char *data);

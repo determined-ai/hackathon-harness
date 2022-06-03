@@ -53,7 +53,13 @@ struct dctx *dctx_open2(
 void dctx_close2(struct dctx *dctx);
 
 
-// will free(*data) eventually
-struct dc_result *dctx_gather(struct dctx *dctx, char *data, size_t len);
+// guarantees an eventual call to free(data)
 int dctx_gather_start(struct dctx *dctx, char *data, size_t len);
+// copies data (and frees the copy later)
+int dctx_gather_start_copy(struct dctx *dctx, const char *data, size_t len);
+// caller is required to preserve data until after dctx_gather_end()
+/* Note that the chief always makes a copy of the data, which will eventually
+   be returned by dc_result_take */
+int dctx_gather_start_nofree(struct dctx *dctx, const char *data, size_t len);
+
 struct dc_result *dctx_gather_end(struct dctx *dctx);

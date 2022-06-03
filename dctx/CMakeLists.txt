@@ -40,10 +40,18 @@ function(default_compile_options tgt)
     endif()
 endfunction()
 
+function(source_compile_options src)
+    get_property(opts SOURCE "${src}" PROPERTY COMPILE_OPTIONS)
+    list(APPEND opts ${ARGN})
+    set_property(SOURCE "${src}" PROPERTY COMPILE_OPTIONS ${opts})
+endfunction()
+
 # build a library out of dctx.c
-add_library(dctx SHARED dctx.c server.c client.c)
+add_library(dctx SHARED dctx.c server.c client.c const.c)
 target_link_libraries(dctx PUBLIC pthread "${LIBUV_LIB}")
 default_compile_options(dctx)
+
+source_compile_options(const.c  "-Wno-discarded-qualifiers")
 
 # build a test around libdctx
 add_executable(test test.c)
