@@ -6,17 +6,16 @@ using BSON
 using BSON: @save
 
 
-p = S3Path("s3://det-no-py-harness-hackathon-us-west-2-573932760021/model.txt")  # provides an filesystem-like interface
 aws = global_aws_config(;region="us-west-2") # pass keyword arguments to change defaults
 
-
+bucket = ""
 model = Chain(Dense(10 => 5,relu),Dense(5 => 2),softmax)
 
 @save "model.bson" model
 data = read("model.bson")
-s3_put(aws, "det-no-py-harness-hackathon-us-west-2-573932760021","model.bson", data)
+s3_put(aws, bucket,"model.bson", data)
 
-weights = s3_get(aws, "det-no-py-harness-hackathon-us-west-2-573932760021", "model.bson")
+weights = s3_get(aws, bucket, "model.bson")
 open("checkpoint.bson", "w") do chk
    write(chk, weights)
 end;

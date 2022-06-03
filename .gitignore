@@ -1,1 +1,4 @@
 model/libdctx.so
+.vscode
+.ipynb_checkpoints
+.DS_Store
