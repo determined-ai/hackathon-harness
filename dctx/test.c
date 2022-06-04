@@ -14,6 +14,17 @@
     } \
 }while(0)
 
+static int test_links(void){
+    // empty linked list is safe to iterate through
+    link_t head = {0};
+    dc_op_t *op, *temp;
+    LINK_FOR_EACH_SAFE(op, temp, &head, dc_op_t, link){
+        printf("empty link list did iterate!\n");
+        return 1;
+    }
+    return 0;
+}
+
 struct unmarshal_test {
     char type[8];
     int rank[8];
@@ -24,7 +35,7 @@ struct unmarshal_test {
     bool fail;
 };
 
-static void on_unmarshal(struct dc_unmarshal *u, void *arg){
+static void on_unmarshal(dc_unmarshal_t *u, void *arg){
     struct unmarshal_test *data = arg;
     int retval = 0;
 
@@ -55,7 +66,7 @@ static uv_buf_t _mkbuf(char *buf, size_t n){
 
 static int test_unmarshal(void){
     int retval = 0;
-    struct dc_unmarshal u = {0};
+    dc_unmarshal_t u = {0};
 
     // one message in one buffer
     {
@@ -163,9 +174,9 @@ done:
 
 static int test_dctx(void){
     int retval = 0;
-    struct dc_result *c = NULL;
-    struct dc_result *w1 = NULL;
-    struct dc_result *w2 = NULL;
+    struct dc_result *C = NULL;
+    struct dc_result *W1 = NULL;
+    struct dc_result *W2 = NULL;
     char *data = NULL;
 
     struct dctx *chief;
@@ -189,39 +200,75 @@ static int test_dctx(void){
         return 1;
     }
 
-    ASSERT(dctx_gather_start_nofree(chief, "chief", 5) == 0);
-    ASSERT(dctx_gather_start_nofree(worker1, "worker1", 7) == 0);
-    ASSERT(dctx_gather_start_nofree(worker2, "worker 2", 8) == 0);
-    c = dctx_gather_end(chief);
-    w1 = dctx_gather_end(worker1);
-    w2 = dctx_gather_end(worker2);
-    // operation succeeded
-    ASSERT(dc_result_ok(c));
-    ASSERT(dc_result_ok(w1));
-    ASSERT(dc_result_ok(w2));
-    // workers get nothing back
-    ASSERT(dc_result_count(w1) == 0);
-    ASSERT(dc_result_count(w2) == 0);
-    // chief gets 3 back
+    dc_op_t *ac, *a1, *a2;
+    ASSERT(ac = dctx_gather_start_nofree(chief, NULL, "chief", 5));
+    ASSERT(a1 = dctx_gather_start_nofree(worker1, NULL, "worker1", 7));
+    ASSERT(a2 = dctx_gather_start_nofree(worker2, NULL, "worker 2", 8));
+
+    dc_op_t *bc, *b1, *b2;
+    ASSERT(bc = dctx_gather_start_nofree(chief, NULL, "CHIEF", 5));
+    ASSERT(b1 = dctx_gather_start_nofree(worker1, NULL, "WORKER1", 7));
+    ASSERT(b2 = dctx_gather_start_nofree(worker2, NULL, "WORKER 2", 8));
+
     size_t len;
-    data = dc_result_take(c, 0, &len);
-    ASSERT(len == 5);
+
+    // gather ops in reverse order, first the second gather then
+    C = dc_op_await(bc);
+    W1 = dc_op_await(b1);
+    W2 = dc_op_await(b2);
+    // operation succeeded
+    ASSERT(dc_result_ok(C));
+    ASSERT(dc_result_ok(W1));
+    ASSERT(dc_result_ok(W2));
+    // workers get nothing back
+    ASSERT(dc_result_count(W1) == 0);
+    ASSERT(dc_result_count(W2) == 0);
+    // chief gets 3 back
+    ASSERT(dc_result_count(C) == 3);
+    ASSERT((len = dc_result_len(C, 0)) == 5);
+    data = dc_result_take(C, 0);
+    ASSERT(strncmp(data, "CHIEF", len) == 0);
+    free(data);
+    ASSERT((len = dc_result_len(C, 1)) == 7);
+    data = dc_result_take(C, 1);
+    ASSERT(strncmp(data, "WORKER1", len) == 0);
+    free(data);
+    ASSERT((len = dc_result_len(C, 2)) == 8);
+    data = dc_result_take(C, 2);
+    ASSERT(strncmp(data, "WORKER 2", len) == 0);
+    dc_result_free(&C);
+    dc_result_free(&W1);
+    dc_result_free(&W2);
+
+    C = dc_op_await(ac);
+    W1 = dc_op_await(a1);
+    W2 = dc_op_await(a2);
+    // operation succeeded
+    ASSERT(dc_result_ok(C));
+    ASSERT(dc_result_ok(W1));
+    ASSERT(dc_result_ok(W2));
+    // workers get nothing back
+    ASSERT(dc_result_count(W1) == 0);
+    ASSERT(dc_result_count(W2) == 0);
+    // chief gets 3 back
+    ASSERT(dc_result_count(C) == 3);
+    ASSERT((len = dc_result_len(C, 0)) == 5);
+    data = dc_result_take(C, 0);
     ASSERT(strncmp(data, "chief", len) == 0);
     free(data);
-    data = dc_result_take(c, 1, &len);
-    ASSERT(len == 7);
+    ASSERT((len = dc_result_len(C, 1)) == 7);
+    data = dc_result_take(C, 1);
     ASSERT(strncmp(data, "worker1", len) == 0);
     free(data);
-    data = dc_result_take(c, 2, &len);
-    ASSERT(len == 8);
+    ASSERT((len = dc_result_len(C, 2)) == 8);
+    data = dc_result_take(C, 2);
     ASSERT(strncmp(data, "worker 2", len) == 0);
-
 
 done:
     free(data);
-    dc_result_free(&c);
-    dc_result_free(&w1);
-    dc_result_free(&w2);
+    dc_result_free(&C);
+    dc_result_free(&W1);
+    dc_result_free(&W2);
 
     dctx_close(&chief);
     dctx_close(&worker1);
@@ -234,6 +281,7 @@ int main(void){
     int retval = 0;
     #define RUN(fn) do{if(fn()){printf(#fn " failed\n"); retval = 1;}}while(0)
 
+    RUN(test_links);
     RUN(test_unmarshal);
     RUN(test_dctx);
 

@@ -2,7 +2,7 @@
 
 #include "internal.h"
 
-int start_gai(struct dctx *dctx){
+int start_gai(dctx_t *dctx){
     struct addrinfo hints = {0};
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
@@ -28,7 +28,7 @@ int start_gai(struct dctx *dctx){
 }
 
 void gai_cb(uv_getaddrinfo_t *req, int status, struct addrinfo *res){
-    struct dctx *dctx = req->data;
+    dctx_t *dctx = req->data;
     if(status < 0){
         // dns failure
         int ret = retry_later(dctx);
@@ -48,7 +48,7 @@ fail:
     close_everything(dctx);
 }
 
-int conn_next(struct dctx *dctx){
+int conn_next(dctx_t *dctx){
     if(dctx->client.ptr == NULL){
         // out of options
         uv_freeaddrinfo(dctx->client.gai);
@@ -73,7 +73,7 @@ int conn_next(struct dctx *dctx){
 }
 
 void conn_cb(uv_connect_t *req, int status){
-    struct dctx *dctx = req->data;
+    dctx_t *dctx = req->data;
 
     if(status < 0){
         // failure
@@ -109,14 +109,14 @@ fail:
     close_everything(dctx);
 }
 
-void close_for_retry(struct dctx *dctx){
+void close_for_retry(dctx_t *dctx){
     // XXX: this makes it unsafe to call close_everything
     uv_close((uv_handle_t*)&dctx->tcp, close_for_retry_cb);
     dctx->tcp_open = false;
 }
 
 void close_for_retry_cb(uv_handle_t *handle){
-    struct dctx *dctx = handle->loop->data;
+    dctx_t *dctx = handle->loop->data;
     int ret = uv_tcp_init(&dctx->loop, &dctx->tcp);
     if(ret < 0){
         uv_perror("uv_tcp_init", ret);
@@ -133,7 +133,7 @@ fail:
     close_everything(dctx);
 }
 
-int retry_later(struct dctx *dctx){
+int retry_later(dctx_t *dctx){
     int ret = uv_timer_start(&dctx->client.timer, retry_cb, 1000, 0);
     if(ret < 0){
         uv_perror("uv_timer_start", ret);
@@ -143,7 +143,7 @@ int retry_later(struct dctx *dctx){
 }
 
 void retry_cb(uv_timer_t *handle){
-    struct dctx *dctx = handle->loop->data;
+    dctx_t *dctx = handle->loop->data;
 
     int ret = start_gai(dctx);
     if(ret){
@@ -152,14 +152,14 @@ void retry_cb(uv_timer_t *handle){
     }
 }
 
-static void on_broken_connection(struct dctx *dctx, uv_stream_t *stream){
+static void on_broken_connection(dctx_t *dctx, uv_stream_t *stream){
     (void)stream;
     // our main connection died, just crash
     close_everything(dctx);
 }
 
 static void on_read(
-    struct dctx *dctx, uv_stream_t *stream, char *buf, size_t len
+    dctx_t *dctx, uv_stream_t *stream, char *buf, size_t len
 ){
     (void)dctx;
     (void)stream;
@@ -167,7 +167,7 @@ static void on_read(
     free(buf);
 }
 
-int init_client(struct dctx *dctx){
+int init_client(dctx_t *dctx){
     int ret = uv_tcp_init(&dctx->loop, &dctx->tcp);
     if(ret < 0){
         uv_perror("uv_tcp_init", ret);

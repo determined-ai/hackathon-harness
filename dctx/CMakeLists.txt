@@ -47,7 +47,7 @@ function(source_compile_options src)
 endfunction()
 
 # build a library out of dctx.c
-add_library(dctx SHARED dctx.c server.c client.c const.c)
+add_library(dctx SHARED dctx.c op.c server.c client.c const.c link.c)
 target_link_libraries(dctx PUBLIC pthread "${LIBUV_LIB}")
 default_compile_options(dctx)
 

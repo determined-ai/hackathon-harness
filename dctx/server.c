@@ -2,44 +2,33 @@
 
 #include "internal.h"
 
-struct dc_conn *dc_conn_new(void){
-    struct dc_conn *conn = malloc(sizeof(*conn));
+dc_conn_t *dc_conn_new(void){
+    dc_conn_t *conn = malloc(sizeof(*conn));
     if(conn){
-        *conn = (struct dc_conn){.rank = -1};
+        *conn = (dc_conn_t){.rank = -1};
         conn->tcp.data = conn;
     }
     return conn;
 }
 
 static void conn_close_cb(uv_handle_t *handle){
-    struct dc_conn *conn = handle->data;
+    dc_conn_t *conn = handle->data;
     unmarshal_free(&conn->unmarshal);
     free(conn);
 }
 
-struct dc_conn *dc_conn_close(struct dc_conn *conn){
-    if(!conn) return NULL;
-    struct dc_conn *out = NULL;
-    if(conn->next != conn){
-        out = conn->next;
-    }
+void dc_conn_close(dc_conn_t *conn){
+    if(!conn) return;
     // remove from the dctx so it cannot be closed twice
-    struct dctx *dctx = conn->tcp.loop->data;
-    if(conn->next == conn){
-        // was the final conn
-        dctx->server.preinit = NULL;
+    if(conn->rank == 0){
+        link_remove(&conn->link);
     }else{
-        conn->prev->next = conn->next;
-        conn->next->prev = conn->prev;
-    }
-    if(conn->rank > -1){
+        dctx_t *dctx = conn->tcp.loop->data;
         dctx->server.peers[conn->rank] = NULL;
     }
 
     // start the close process
     uv_close((uv_handle_t*)&conn->tcp, conn_close_cb);
-
-    return out;
 }
 
 int bind_via_gai(uv_tcp_t *srv, const char *addr, const char *svc){
@@ -85,15 +74,15 @@ int bind_via_gai(uv_tcp_t *srv, const char *addr, const char *svc){
 
 
 static void listener_cb(uv_stream_t *srv, int status){
-    struct dctx *dctx = srv->loop->data;
+    dctx_t *dctx = srv->loop->data;
     if(status < 0){
         uv_perror("uv_listen(cb)", status);
         goto fail;
     }
 
-    struct dc_conn *conn = malloc(sizeof(*conn));
+    dc_conn_t *conn = malloc(sizeof(*conn));
     if(!conn) goto fail;
-    *conn = (struct dc_conn){.rank = -1};
+    *conn = (dc_conn_t){.rank = -1};
     conn->tcp.data = conn;
 
     int ret = uv_tcp_init(&dctx->loop, &conn->tcp);
@@ -113,18 +102,7 @@ static void listener_cb(uv_stream_t *srv, int status){
     rprintf("accepted a connection!\n");
 
     // remember this connection, as a preinit
-    if(dctx->server.preinit == NULL){
-        dctx->server.preinit = conn;
-        conn->prev = conn;
-        conn->next = conn;
-    }else{
-        struct dc_conn *first = dctx->server.preinit;
-        struct dc_conn *last = dctx->server.preinit->prev;
-        first->prev = conn;
-        last->next = conn;
-        conn->prev = last;
-        conn->next = first;
-    }
+    link_list_append(&dctx->server.preinit, &conn->link);
 
     // start reading from this connection
     ret = uv_read_start((uv_stream_t*)&conn->tcp, allocator, read_cb);
@@ -141,8 +119,8 @@ fail:
     close_everything(dctx);
 }
 
-static void on_broken_connection(struct dctx *dctx, uv_stream_t *stream){
-    struct dc_conn *conn = stream->data;
+static void on_broken_connection(dctx_t *dctx, uv_stream_t *stream){
+    dc_conn_t *conn = stream->data;
 
     // go to STOPPING state
     if(dctx->status != DCTX_STOPPING){
@@ -152,24 +130,22 @@ static void on_broken_connection(struct dctx *dctx, uv_stream_t *stream){
         pthread_mutex_unlock(&dctx->mutex);
     }
 
-    if(conn->rank == -1){
-        // conn is preinit
-        dc_conn_close(conn);
-    }else{
+    if(conn->rank > -1){
         // conn has known rank
-        dctx->server.peers[conn->rank] = dc_conn_close(conn);
+        dctx->server.peers[conn->rank] = NULL;
     }
+    dc_conn_close(conn);
 }
 
-struct unmarshal_data {
-    struct dctx *dctx;
-    struct dc_conn *conn;
-};
+typedef struct {
+    dctx_t *dctx;
+    dc_conn_t *conn;
+} unmarshal_data_t;
 
-static void on_unmarshal(struct dc_unmarshal *u, void *arg){
-    struct unmarshal_data *data = arg;
-    struct dctx *dctx = data->dctx;
-    struct dc_conn *conn = data->conn;
+static void on_unmarshal(dc_unmarshal_t *u, void *arg){
+    unmarshal_data_t *data = arg;
+    dctx_t *dctx = data->dctx;
+    dc_conn_t *conn = data->conn;
 
     if(conn->rank == -1){
         // preinit connection, only "i"int
@@ -187,19 +163,8 @@ static void on_unmarshal(struct dc_unmarshal *u, void *arg){
             goto fail;
         }
         // transition from preinit to a ranked peer
-        if(conn->next == conn){
-            // last preinit container
-            dctx->server.preinit = NULL;
-        }else{
-            // not last preinit container
-            struct dc_conn *first = dctx->server.preinit;
-            struct dc_conn *last = dctx->server.preinit->prev;
-            first->prev = conn;
-            last->next = conn;
-            conn->prev = last;
-            conn->next = first;
-        }
-        // store conn at the right rank
+        link_remove(&conn->link);
+        // store conn as a ranked peer instead
         dctx->server.peers[i] = conn;
         dctx->server.npeers++;
         conn->rank = i;
@@ -210,26 +175,30 @@ static void on_unmarshal(struct dc_unmarshal *u, void *arg){
 
     // non-preinit: store message for rank and stop reading
     // rprintf("read: %.*s\n", (int)u->len, u->body);
-    if(dctx->server.buf[conn->rank] != NULL){
-        rprintf("somehow got another message from rank=%d\n", conn->rank);
-        goto fail;
-    }
+
+    // find the op or create a new one
+    dc_op_type_e type = DC_OP_GATHER;
+    const char *series = NULL;
+    int rank = conn->rank;
+    dc_op_t *op = get_op_for_recv(dctx, type, series, rank);
+    if(!op) goto fail;
+
     // take ownership of the buffer
-    dctx->server.buf[conn->rank] = u->body;
-    dctx->server.len[conn->rank] = u->len;
+    char *body = u->body;
+    size_t len = u->len;
     u->body = NULL;
-    // increment the number of messages received
-    dctx->server.msgs_recvd++;
 
-    // stop reading on this stream
-    int ret = uv_read_stop((uv_stream_t*)&conn->tcp);
-    if(ret < 0){
-        uv_perror("uv_read_stop", ret);
-        goto fail;
+    switch(op->type){
+        case DC_OP_GATHER:
+            #define OP op->u.gather.chief
+            OP.recvd[rank] = body;
+            OP.len[rank] = len;
+            if(++OP.nrecvd == (size_t)dctx->size){
+                mark_op_completed_and_notify(op);
+            }
+            #undef OP
+            break;
     }
-
-    // check for state changes
-    advance_state(dctx);
 
     return;
 
@@ -239,12 +208,12 @@ fail:
 }
 
 static void on_read(
-    struct dctx *dctx, uv_stream_t *stream, char *buf, size_t len
+    dctx_t *dctx, uv_stream_t *stream, char *buf, size_t len
 ){
     (void)dctx;
-    struct dc_conn *conn = stream->data;
+    dc_conn_t *conn = stream->data;
 
-    struct unmarshal_data data = {dctx, conn};
+    unmarshal_data_t data = {dctx, conn};
     int ret = unmarshal(&conn->unmarshal, buf, len, on_unmarshal, &data);
     if(ret) goto fail;
 
@@ -255,7 +224,7 @@ fail:
     close_everything(dctx);
 }
 
-int init_server(struct dctx *dctx){
+int init_server(dctx_t *dctx){
     int ret = uv_tcp_init(&dctx->loop, &dctx->tcp);
     if(ret < 0){
         uv_perror("uv_tcp_init", ret);
@@ -280,21 +249,4 @@ int init_server(struct dctx *dctx){
     dctx->on_read = on_read;
 
     return 0;
-}
-
-void server_enable_reads(struct dctx *dctx){
-    for(int i = 1; i < dctx->size; i++){
-        // continue reading from this connection
-        struct dc_conn *conn = dctx->server.peers[i];
-        int ret = uv_read_start((uv_stream_t*)&conn->tcp, allocator, read_cb);
-        if(ret < 0){
-            uv_perror("uv_read_start", ret);
-            goto fail;
-        }
-    }
-    return;
-
-fail:
-    dctx->failed = true;
-    close_everything(dctx);
 }

@@ -7,6 +7,61 @@
 
 #define rprintf(fmt, ...) printf("[rank=%d] " fmt, dctx->rank, ##__VA_ARGS__)
 
+#define RBUG(msg) fprintf(stderr, "[rank=%d] BUG: " msg "\n", dctx->rank);
+
+// circularly linked lists, where the head element is not part of the list
+
+typedef struct link {
+    struct link *prev;
+    struct link *next;
+} link_t;
+
+void link_init(link_t *l);
+
+/* prepend/append a single element.  You must ensure that link is not in a list
+   via link_remove() before calling these; the new and old lists may have
+   different thread safety requirements */
+void link_list_prepend(link_t *head, link_t *link);
+void link_list_append(link_t *head, link_t *link);
+
+// pop a single element, or return NULL if there is none
+link_t *link_list_pop_first(link_t *head);
+link_t *link_list_pop_last(link_t *head);
+
+void link_remove(link_t *link);
+
+bool link_list_isempty(link_t *head);
+
+/* DEF_CONTAINER_OF should be used right after struct definition to create an
+   inline function for dereferencing a struct via a member.  "member_type" is
+   required to avoid typeof, which windows doesn't have.  Also, unlike the
+   linux kernel version, multi-token types ("struct xyz") are not supported. */
+#define DEF_CONTAINER_OF(structure, member, member_type) \
+    static inline structure *structure ## _ ## member ## _container_of( \
+            const member_type *ptr){ \
+        if(ptr == NULL) return NULL; \
+        uintptr_t offset = offsetof(structure, member); \
+        return (structure*)((uintptr_t)ptr - offset); \
+    }
+
+#define CONTAINER_OF(ptr, structure, member) \
+    structure ## _ ## member ## _container_of(ptr)
+
+// automate for-loops which call CONTAINER_OF for each link in list
+#define LINK_FOR_EACH(var, head, structure, member) \
+    for(var = CONTAINER_OF((head)->next, structure, member); \
+        var && &var->member != (head); \
+        var = CONTAINER_OF(var->member.next, structure, member))
+
+// same thing but use a temporary variable to be safe against link_remove
+#define LINK_FOR_EACH_SAFE(var, temp, head, structure, member) \
+    for(var = CONTAINER_OF((head)->next, structure, member), \
+        temp = !var?NULL:CONTAINER_OF(var->member.next, structure, member); \
+        var && &var->member != (head); \
+        var = temp, \
+        temp = CONTAINER_OF(var->member.next, structure, member))
+
+
 struct dc_result {
     bool ok;
     // how many data and len pairs
@@ -15,17 +70,10 @@ struct dc_result {
     size_t *len;
 };
 
-extern struct dc_result NOT_OK;
-extern struct dc_result OK_EMPTY;
+extern dc_result_t NOT_OK;
+extern dc_result_t OK_EMPTY;
 
-struct dc_buf {
-    char *base;
-    size_t len;
-    size_t skip;
-    struct dc_buf *next;
-};
-
-struct dc_unmarshal {
+typedef struct {
     char type;  // "i"nit, "m"essage, "k"eepalive
     size_t nread_before;
     // init arg
@@ -33,15 +81,15 @@ struct dc_unmarshal {
     // msg args
     uint32_t len;
     char *body;
-};
+} dc_unmarshal_t;
 
-struct dc_conn {
+typedef struct {
     int rank;
     uv_tcp_t tcp;
-    struct dc_unmarshal unmarshal;
-    struct dc_conn *next;
-    struct dc_conn *prev;
-};
+    dc_unmarshal_t unmarshal;
+    link_t link;
+} dc_conn_t;
+DEF_CONTAINER_OF(dc_conn_t, link, link_t)
 
 enum dc_status {
     // before the thread has begun
@@ -55,25 +103,63 @@ enum dc_status {
     DCTX_DONE,
 };
 
-enum dc_op_type {
-    // no op in progress
-    DC_OP_NONE=0,
-    DC_OP_GATHER,
-};
+// dc_write_cb is the .data we assign to every uv_write_t
+typedef enum {
+    // just free a buffer
+    WRITE_CB_FREE,
+    // pass u.op to dc_op_write_cb
+    WRITE_CB_OP,
+} dc_write_cb_e;
 
-union dc_op {
-    struct {
-        // chief always does a copy, even in the nofree case
-        char *data;
-        size_t len;
-    } gather_chief;
-    struct {
-        char *data;
-        const char *constdata;
-        size_t len;
-        bool sent;
-    } gather_worker;
+typedef struct {
+    dc_write_cb_e type;
+    union {
+        void *free;
+        dc_op_t *op;
+    } u;
+} dc_write_cb_t;
+
+typedef enum {
+    DC_OP_GATHER,
+} dc_op_type_e;
+
+struct dc_op {
+    struct dctx *dctx;
+    link_t link;  // dctx->a.inflight or dctx->a.completed
+
+    // every operation has a type and a series
+    dc_op_type_e type;
+    char *series;
+
+    /* ready is set when the op is moved to completed, and only after that can
+       an external thread take the operation for itself */
+    bool ready;
+
+    union {
+        union {
+            // a chief gather is complete when nrecvd == dctx->size
+            // (gather_start counts for one nrecvd)
+            struct {
+                // client messages we have received
+                char **recvd;
+                size_t *len;
+                // count of client msgs
+                size_t nrecvd;
+            } chief;
+            // a worker gather is complete when the dc_op_write_cb finishes
+            struct {
+                // either data or nofree is defined
+                char *data;
+                const char *nofree;
+                size_t len;
+                bool sent;
+                // the worker's gather finishes in dc_op_write_cb
+                dc_write_cb_t cb;
+            } worker;
+        } gather;
+    } u;
 };
+DEF_CONTAINER_OF(dc_op_t, link, link_t)
 
 struct dctx {
     int rank;
@@ -88,10 +174,9 @@ struct dctx {
 
     uv_loop_t loop;
     uv_async_t async;
-    // XXX: track when main tcp needs closing still?
     uv_tcp_t tcp;
     bool tcp_open;
-    struct dc_unmarshal unmarshal;
+    dc_unmarshal_t unmarshal;
 
     // XXX: I think a should always be mutex protected
     // Well... I think some things are written in one direction only, so only
@@ -100,23 +185,19 @@ struct dctx {
     struct {
         bool started;
         bool close;
-        enum dc_op_type op_type;
-        union dc_op op;
-        bool op_done;
+        // ready means all connections are made
         bool ready;
+        // lists of ops
+        link_t inflight;  // dc_op_t->link
+        link_t complete;  // dc_op_t->link
     } a;
 
     struct {
         // connections which have not identified themselves yet
-        struct dc_conn *preinit;
+        link_t preinit;  // dc_conn_t->link
         // connections of known rank
-        struct dc_conn **peers;
+        dc_conn_t **peers;
         size_t npeers;
-        // we only allow one message per peer at a time
-        char **buf;
-        size_t *len;
-        // a global count which is reset between ops
-        size_t msgs_recvd;
     } server;
 
     struct {
@@ -141,8 +222,8 @@ struct dctx {
     bool failed;
 };
 
-struct dc_result *dc_result_new(size_t ndata);
-void dc_result_set(struct dc_result *r, size_t i, char *data, size_t len);
+dc_result_t *dc_result_new(size_t ndata);
+void dc_result_set(dc_result_t *r, size_t i, char *data, size_t len);
 
 void advance_state(struct dctx *dctx);
 
@@ -156,29 +237,48 @@ void read_cb(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf);
 
 // calls on_unmarshal once for every message found
 int unmarshal(
-    struct dc_unmarshal *unmarshal,
+    dc_unmarshal_t *unmarshal,
     char *buf,
     size_t len,
-    void (*on_unmarshal)(struct dc_unmarshal*, void*),
+    void (*on_unmarshal)(dc_unmarshal_t*, void*),
     void *arg
 );
-void unmarshal_free(struct dc_unmarshal *unmarshal);
+void unmarshal_free(dc_unmarshal_t *unmarshal);
 
 char *bytesdup(const char *data, size_t len);
 
+// our generic dc_write_cb reads a dc_write_cb_t* from req->data
+void dc_write_cb(uv_write_t *req, int status);
+
+// let *cb handle *base however it chooses
+int tcp_write_ex(uv_tcp_t *tcp, char *base, size_t len, dc_write_cb_t *cb);
 // will call free(base)
 int tcp_write(uv_tcp_t *tcp, char *base, size_t len);
 // will copy base first, then call tcp_write
 int tcp_write_copy(uv_tcp_t *tcp, const char *base, size_t len);
-// you must guarantee that write_cb is done before freeing base
-int tcp_write_nofree(uv_tcp_t *tcp, const char *base, size_t len);
 
-// server
+// op.c
 
-struct dc_conn *dc_conn_new(void);
+// the caller must insert into inflight in a thread-safe way
+dc_op_t *dc_op_new(dctx_t *dctx, dc_op_type_e type, const char *series);
+// the caller must have removed from the linked list in a thread-safe way
+void dc_op_free(dc_op_t *op, int rank);
+void mark_op_completed_locked(dc_op_t *op);
+void mark_op_completed_and_notify(dc_op_t *op);
+void dc_op_write_cb(dc_op_t *op);
+bool dc_op_advance(dc_op_t *op);
+dc_op_t *get_op_for_recv(
+    dctx_t *dctx, dc_op_type_e type, const char *series, int rank
+);
+dc_op_t *get_op_for_call_locked(
+    dctx_t *dctx, dc_op_type_e type, const char *series
+);
 
-// returns the next dc_conn, or NULL
-struct dc_conn *dc_conn_close(struct dc_conn *conn);
+// server.c
+
+dc_conn_t *dc_conn_new(void);
+
+void dc_conn_close(dc_conn_t *conn);
 
 int bind_via_gai(uv_tcp_t *srv, const char *addr, const char *svc);
 
@@ -186,7 +286,7 @@ int init_server(struct dctx *dctx);
 
 void server_enable_reads(struct dctx *dctx);
 
-// client
+// client.c
 
 int start_gai(struct dctx *dctx);
 void gai_cb(uv_getaddrinfo_t *req, int status, struct addrinfo *res);
@@ -202,5 +302,5 @@ void retry_cb(uv_timer_t *handle);
 
 int init_client(struct dctx *dctx);
 
-// const
+// const.c
 char *i_promise_i_wont_touch(const char *data);
