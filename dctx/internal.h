@@ -178,10 +178,10 @@ struct dctx {
     bool tcp_open;
     dc_unmarshal_t unmarshal;
 
-    // XXX: I think a should always be mutex protected
-    // Well... I think some things are written in one direction only, so only
-    // have to be locked when writing, or when reading from the other direction.
-    // a.ready is like that.
+    // closed is set by close_everything
+    bool closed;
+
+    // the async-related stuff must always be async-protected
     struct {
         bool started;
         bool close;

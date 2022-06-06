@@ -297,7 +297,9 @@ void dctx_close2(dctx_t *dctx){
     rprintf("dctx_close!\n");
 
     // ask the loop to shutdown
+    pthread_mutex_lock(&dctx->mutex);
     dctx->a.close = true;
+    pthread_mutex_unlock(&dctx->mutex);
     uv_async_send(&dctx->async);
 
     // wait for the loop to shutdown
@@ -375,6 +377,7 @@ void close_everything(dctx_t *dctx){
             dctx->server.peers[i] = NULL;
         }
     }
+    dctx->closed = true;
 }
 
 

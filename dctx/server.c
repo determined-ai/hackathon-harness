@@ -20,7 +20,7 @@ static void conn_close_cb(uv_handle_t *handle){
 void dc_conn_close(dc_conn_t *conn){
     if(!conn) return;
     // remove from the dctx so it cannot be closed twice
-    if(conn->rank == 0){
+    if(conn->rank < 0){
         link_remove(&conn->link);
     }else{
         dctx_t *dctx = conn->tcp.loop->data;

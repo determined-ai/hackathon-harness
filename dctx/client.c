@@ -29,6 +29,11 @@ int start_gai(dctx_t *dctx){
 
 void gai_cb(uv_getaddrinfo_t *req, int status, struct addrinfo *res){
     dctx_t *dctx = req->data;
+    if(dctx->closed){
+        if(res) uv_freeaddrinfo(res);
+        return;
+    }
+
     if(status < 0){
         // dns failure
         int ret = retry_later(dctx);
@@ -74,6 +79,7 @@ int conn_next(dctx_t *dctx){
 
 void conn_cb(uv_connect_t *req, int status){
     dctx_t *dctx = req->data;
+    if(dctx->closed) return;
 
     if(status < 0){
         // failure
@@ -110,13 +116,14 @@ fail:
 }
 
 void close_for_retry(dctx_t *dctx){
-    // XXX: this makes it unsafe to call close_everything
     uv_close((uv_handle_t*)&dctx->tcp, close_for_retry_cb);
     dctx->tcp_open = false;
 }
 
 void close_for_retry_cb(uv_handle_t *handle){
     dctx_t *dctx = handle->loop->data;
+    if(dctx->closed) return;
+
     int ret = uv_tcp_init(&dctx->loop, &dctx->tcp);
     if(ret < 0){
         uv_perror("uv_tcp_init", ret);
@@ -144,6 +151,7 @@ int retry_later(dctx_t *dctx){
 
 void retry_cb(uv_timer_t *handle){
     dctx_t *dctx = handle->loop->data;
+    if(dctx->closed) return;
 
     int ret = start_gai(dctx);
     if(ret){
