@@ -254,7 +254,7 @@ int dctx_open(
 
     ret = uv_async_init(&dctx->loop, &dctx->async, async_cb);
     if(ret < 0){
-        uv_perror("uv_loop_init", ret); // TODO
+        uv_perror("uv_async_init", ret); // TODO
         return 2;
     }
 
@@ -324,11 +324,11 @@ void dctx_close2(dctx_t *dctx){
     link_t *link;
     while((link = link_list_pop_first(&dctx->a.inflight))){
         dc_op_t *op = CONTAINER_OF(link, dc_op_t, link);
-        dc_op_free(op, dctx->rank);
+        dc_op_free(op);
     }
     while((link = link_list_pop_first(&dctx->a.complete))){
         dc_op_t *op = CONTAINER_OF(link, dc_op_t, link);
-        dc_op_free(op, dctx->rank);
+        dc_op_free(op);
     }
 
     if(dctx->rank == 0){
@@ -361,6 +361,7 @@ void noop_handle_closer(uv_handle_t *handle){
 };
 
 void close_everything(dctx_t *dctx){
+    if(dctx->closed) return;
     // close the async
     uv_close((uv_handle_t*)&dctx->async, noop_handle_closer);
     // close the main tcp
@@ -379,6 +380,12 @@ void close_everything(dctx_t *dctx){
         for(size_t i = 0; i < (size_t)dctx->size; i++){
             dc_conn_close(dctx->server.peers[i]);
             dctx->server.peers[i] = NULL;
+        }
+    }else{
+        // client closes its timer
+        if(dctx->client.timer_open){
+            uv_close((uv_handle_t*)&dctx->client.timer, noop_handle_closer);
+            dctx->client.timer_open = false;
         }
     }
     dctx->closed = true;
@@ -456,16 +463,18 @@ fail:
 
 handle_cb:
     dc_write_cb_t *cb = req->data;
-    if(!cb) return;
-    switch(cb->type){
-        case WRITE_CB_FREE:
-            free(cb->u.free);
-            free(cb);
-            break;
-        case WRITE_CB_OP:
-            dc_op_write_cb(cb->u.op);
-            break;
+    if(cb){
+        switch(cb->type){
+            case WRITE_CB_FREE:
+                free(cb->u.free);
+                free(cb);
+                break;
+            case WRITE_CB_OP:
+                dc_op_write_cb(cb->u.op);
+                break;
+        }
     }
+    free(req);
     return;
 }
 

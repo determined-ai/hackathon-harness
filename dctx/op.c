@@ -14,7 +14,7 @@ dc_op_t *dc_op_new(dctx_t *dctx, dc_op_type_e type, const char *series, size_t s
     dc_op_t *op = malloc(sizeof(*op));
     if(!op){
         perror("malloc");
-        return op;
+        return NULL;
     }
     *op = (dc_op_t){
         .type = type,
@@ -48,19 +48,20 @@ dc_op_t *dc_op_new(dctx_t *dctx, dc_op_type_e type, const char *series, size_t s
     return op;
 
 fail:
-    dc_op_free(op, dctx->rank);
+    dc_op_free(op);
     return NULL;
 }
 
 // the caller must have removed from the linked list in a thread-safe way
-void dc_op_free(dc_op_t *op, int rank){
+void dc_op_free(dc_op_t *op){
+    dctx_t *dctx = op->dctx;
     switch(op->type){
         case DC_OP_GATHER:
-            if(rank == 0){
+            if(dctx->rank == 0){
                 #define OP op->u.gather.chief
                 // allocate and zeroize OP.recvd
                 if(OP.recvd){
-                    for(size_t i = 0; i < (size_t)rank; i++){
+                    for(size_t i = 0; i < (size_t)dctx->size; i++){
                         if(OP.recvd[i]) free(OP.recvd[i]);
                     }
                     free(OP.recvd);
@@ -223,7 +224,7 @@ dc_result_t *dc_op_await(dc_op_t *op){
     }
 
 done:
-    dc_op_free(op, dctx->rank);
+    dc_op_free(op);
     return result ? result : &DC_RESULT_NOT_OK;
 }
 

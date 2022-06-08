@@ -108,6 +108,7 @@ struct dctx {
         struct addrinfo *ptr;
         uv_connect_t conn_req;
         uv_timer_t timer;
+        bool timer_open;
         bool connected;
     } client;
 

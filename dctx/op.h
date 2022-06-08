@@ -51,7 +51,7 @@ dc_op_t *dc_op_new(
     dctx_t *dctx, dc_op_type_e type, const char *series, size_t slen
 );
 // the caller must have removed from the linked list in a thread-safe way
-void dc_op_free(dc_op_t *op, int rank);
+void dc_op_free(dc_op_t *op);
 void mark_op_completed_locked(dc_op_t *op);
 void mark_op_completed_and_notify(dc_op_t *op);
 void dc_op_write_cb(dc_op_t *op);

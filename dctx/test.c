@@ -197,6 +197,7 @@ static int test_dctx(void){
     dc_result_t *rb1 = NULL;
     dc_result_t *rb2 = NULL;
     char *data = NULL;
+    int ret;
 
     #define ASSERT_RESULT(r, i, buf) do { \
         data = dc_result_take(r, i); \
@@ -207,7 +208,7 @@ static int test_dctx(void){
     } while(0)
 
     struct dctx *chief;
-    int ret = dctx_open(&chief, 0, 3, 0, 0, 0, 0, "localhost", "1234");
+    ret = dctx_open(&chief, 0, 3, 0, 0, 0, 0, "localhost", "1234");
     if(ret){
         printf("dctx_open failed! %d\n", ret);
         return 1;
@@ -291,16 +292,14 @@ done:
 }
 
 int main(void){
+    signal(SIGPIPE, SIG_IGN);
+
     int retval = 0;
     #define RUN(fn) do{if(fn()){printf(#fn " failed\n"); retval = 1;}}while(0)
 
     RUN(test_links);
     RUN(test_unmarshal);
     RUN(test_dctx);
-    (void)test_links;
-    (void)test_dctx;
-
-    (void)test_dctx;
 
     #undef RUN
     printf("%s\n", retval ? "FAIL" : "PASS");

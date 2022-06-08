@@ -184,6 +184,7 @@ int init_client(dctx_t *dctx){
         uv_perror("uv_timer_init", ret);  // TODO
         return 1;
     }
+    dctx->client.timer_open = true;
 
     // worker, start connection process`
     ret = start_gai(dctx);
