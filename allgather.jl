@@ -44,9 +44,9 @@ struct DistributedContext
     end
 end
 
-mutable struct DistributedGather
+mutable struct DistributedOperation
     # the C library object
-    _dctx::Ptr{Cvoid}
+    _op::Ptr{Cvoid}
 
     # hold a reference to the bytes we pass into dctx_gather_start_nofree, so
     # they aren't GC'd before it is sent over the wire
@@ -57,31 +57,32 @@ close(dctx::DistributedContext) = begin
     ccall((:dctx_close2, "libdctx"), Cvoid, (Ptr{Cvoid},), dctx._dctx)
 end
 
-gather_start(dctx::DistributedContext, obj::Any) = begin
+gather_start(dctx::DistributedContext, obj::Any; series::String = "") = begin
     # serialize the object
     io = IOBuffer()
     serialize(io, obj)
     # get the content of the buffer (without a copy)
     data = take!(io)
     # call dctx_gather_start with the serialized data
-    status = ccall((:dctx_gather_start_nofree, "libdctx"), Cint,
-        (Ptr{Cvoid}, Ptr{UInt8}, Csize_t),
-        dctx._dctx, data, length(data))
-    if status != 0
+    dc_op = ccall((:dctx_gather_start_nofree, "libdctx"), Ptr{Cvoid},
+        (Ptr{Cvoid}, Ptr{UInt8}, Csize_t, Ptr{UInt8}, Csize_t),
+        dctx._dctx, series, length(series), data, length(data))
+    ok = ccall((:dc_op_ok, "libdctx"), Cuchar, (Ptr{Cvoid},), dc_op)
+    if ok != 1
         error("dctx_gather_start failed")
     end
 
-    DistributedGather(dctx._dctx, Ref(data))
+    DistributedOperation(dc_op, Ref(data))
 end
 
-gather_end(dctx::DistributedGather) = begin
+await(dc_op::DistributedOperation) = begin
     # use @threadcall intead of ccall to avoid blocking the rest of julia
     dc_result = @threadcall(
-        (:dctx_gather_end, "libdctx"), Ptr{Cvoid}, (Ptr{Cvoid},), dctx._dctx
+        (:dc_op_await, "libdctx"), Ptr{Cvoid}, (Ptr{Cvoid},), dc_op._op
     )
     try
         # done preserving the buffer
-        dctx._preserve = Ref(0)
+        dc_op._preserve = Ref(0)
 
         ok = ccall(
             (:dc_result_ok, "libdctx"), Cuchar, (Ptr{Cvoid},), dc_result
@@ -99,10 +100,20 @@ gather_end(dctx::DistributedGather) = begin
 
         # Set each output
         for i = 1:count
-            len = Ref(UInt64(0))
-            data = ccall((:dc_result_take, "libdctx"), Ptr{UInt8},
-                               (Ptr{Cvoid}, Csize_t, Ptr{Csize_t}),
-                               dc_result, i-1, len)
+            len = ccall(
+                (:dc_result_len, "libdctx"),
+                Csize_t,
+                (Ptr{Cvoid}, Csize_t),
+                dc_result,
+                i-1
+            )
+            data = ccall(
+                (:dc_result_take, "libdctx"),
+                Ptr{UInt8},
+                (Ptr{Cvoid}, Csize_t),
+                dc_result,
+                i-1
+            )
             # tell julia to take ownership of the buffer, as a UInt8
             # (this will cause julia to call free(data) eventually)
             jldata = unsafe_wrap(Array{UInt8}, data, len[], own=true)
@@ -121,27 +132,50 @@ gather_end(dctx::DistributedGather) = begin
 end
 
 gather(dctx::DistributedContext, obj::Any) = begin
-    gather_end(gather_start(dctx, obj))
+    await(gather_start(dctx, obj))
 end
 
 chief = DistributedContext(0, 3, 0, 0, 0, 0, "localhost", "1234")
 worker1 = DistributedContext(1, 3, 0, 0, 0, 0, "localhost", "1234")
 worker2 = DistributedContext(2, 3, 0, 0, 0, 0, "localhost", "1234")
 
-gc = gather_start(chief, "chief")
-gw1 = gather_start(worker1, "worker1")
-gw2 = gather_start(worker2, 2)
+# worker 2 will start gathers in opposite order
 
-c = gather_end(gc)
-w1 = gather_end(gw1)
-w2 = gather_end(gw2)
+gca = gather_start(chief, "chief", series="a")
+gw1a = gather_start(worker1, "worker1", series="a")
+gw2b = gather_start(worker2, 2, series="b")
 
-print(c)
+gcb = gather_start(chief, "CHIEF", series="b")
+gw1b = gather_start(worker1, "WORKER1", series="b")
+gw2a = gather_start(worker2, "two", series="a")
+
+ca = await(gca)
+w1a = await(gw1a)
+w2a = await(gw2a)
+
+cb = await(gcb)
+w1b = await(gw1b)
+w2b = await(gw2b)
+
+print("series=a: ")
+print(ca)
 print("\n")
-print(w1)
+
+if ca != ["chief", "worker1", "two"]
+    error("chief gathered wrong")
+end
+
+print("series=b: ")
+print(cb)
 print("\n")
-print(w2)
-print("\n")
+
+if ca != ["chief", "worker1", "two"]
+    error("chief gathered wrong")
+end
+
+if !(w1a == w2a == w1b == w2b == [])
+    error("workers had non-empty gathers")
+end
 
 close(chief)
 close(worker1)

@@ -4,8 +4,8 @@
 
 #include "internal.h"
 
-dc_result_t NOT_OK = { .ok = false };
-dc_result_t OK_EMPTY = { .ok = true };
+dc_result_t DC_RESULT_NOT_OK = { .ok = false };
+dc_result_t DC_RESULT_EMPTY = { .ok = true };
 
 void dc_result_free(dc_result_t **rptr) {
     dc_result_t *r = *rptr;
@@ -14,7 +14,7 @@ void dc_result_free(dc_result_t **rptr) {
 }
 
 void dc_result_free2(dc_result_t *r) {
-    if(r == NULL || r == &NOT_OK || r == &OK_EMPTY) return;
+    if(r == NULL || r == &DC_RESULT_NOT_OK || r == &DC_RESULT_EMPTY) return;
     if(r->data != NULL){
         for(size_t i = 0; i < r->ndata; i++){
             char *data = r->data[i];
@@ -176,6 +176,10 @@ dctx_t *dctx_open2(
     const char *chief_host,
     const char *chief_svc
 ){
+    if(rank < 0 || rank > INT32_MAX){
+        fprintf(stderr, "invalid rank: %d\n", rank);
+        return NULL;
+    }
     dctx_t *out;
     int ret = dctx_open(
         &out,
@@ -433,104 +437,6 @@ fail:
     close_everything(dctx);
 }
 
-int unmarshal(
-    dc_unmarshal_t *u,
-    char *base,
-    size_t len,
-    void (*on_unmarshal)(dc_unmarshal_t*, void*),
-    void *arg
-){
-    int retval = 0;
-    size_t nread = 0;
-    size_t nskip = 0;
-
-    #define CHECK_LENGTH if(len == nread) goto done
-    #define MSG_POS (u->nread_before + nread - nskip)
-
-start:
-    CHECK_LENGTH;
-
-    if(!u->type){
-        char c = base[nread++];
-        switch(c){
-            case 'i': // "i"nit
-            case 'm': // "m"essage
-                u->type = c;
-                break;
-
-            case 'k': // "k"eepalive
-                // that's it for the keepalive message, no user callback
-                unmarshal_free(u);
-                nskip = nread;
-                goto start;
-
-            default:
-                printf("bad message, msg type = %c (%d), len = %zu\n", c, (int)c, len);
-                retval = 1;
-                goto done;
-        }
-    }
-
-    CHECK_LENGTH;
-
-    if(u->type == 'i'){
-        // fill in the rank arg
-        // XXX: triple-check for int bitshift rounding errors
-        if(MSG_POS == 1){ u->rank |= base[nread++] << 3; CHECK_LENGTH; }
-        if(MSG_POS == 2){ u->rank |= base[nread++] << 2; CHECK_LENGTH; }
-        if(MSG_POS == 3){ u->rank |= base[nread++] << 1; CHECK_LENGTH; }
-        if(MSG_POS == 4){ u->rank |= base[nread++] << 0; }
-        // complete message
-        on_unmarshal(u, arg);
-        unmarshal_free(u);
-        nskip = nread;
-        goto start;
-    }else if(u->type == 'm'){
-        // fill in the len arg
-        if(MSG_POS == 1){ u->len |= (uint32_t)(base[nread++] << 3); CHECK_LENGTH; }
-        if(MSG_POS == 2){ u->len |= (uint32_t)(base[nread++] << 2); CHECK_LENGTH; }
-        if(MSG_POS == 3){ u->len |= (uint32_t)(base[nread++] << 1); CHECK_LENGTH; }
-        if(MSG_POS == 4){ u->len |= (uint32_t)(base[nread++] << 0); CHECK_LENGTH; }
-        // allocate space for this body
-        if(u->body == NULL){
-            u->body = malloc(u->len);
-            if(!u->body){
-                char errmsg[32];
-                snprintf(errmsg, sizeof(errmsg), "malloc(%u)\n", u->len);
-                perror(errmsg);
-                retval = 1;
-                goto done;
-            }
-        }
-        size_t body_pos = MSG_POS - 5;
-        size_t want = u->len - body_pos;
-        size_t have = len - nread;
-        if(want <= have){
-            memcpy(u->body + body_pos, base + nread, want);
-            nread += want;
-            // complete message
-            on_unmarshal(u, arg);
-            unmarshal_free(u);
-            nskip = nread;
-            goto start;
-        }else{
-            // copy remainder of buf
-            memcpy(u->body + body_pos, base + nread, have);
-            nread += have;
-            goto done;
-        }
-    }
-
-done:
-    free(base);
-    u->nread_before += len - nskip;
-    return retval;
-}
-
-void unmarshal_free(dc_unmarshal_t *u){
-    if(u->body) free(u->body);
-    *u = (dc_unmarshal_t){0};
-}
 
 void dc_write_cb(uv_write_t *req, int status){
     dctx_t *dctx = req->handle->loop->data;
@@ -626,16 +532,25 @@ int tcp_write_copy(uv_tcp_t *tcp, const char *base, size_t len){
 static dc_op_t *dctx_gather_start_ex(
     dctx_t *dctx,
     const char *series,
+    size_t slen,
     char *data,
     const char *nofree,
     size_t len
 ){
+    if(zstrnlen(series, 257) > 256){
+        fprintf(stderr, "series name length must not exceed 256\n");
+        return &DC_OP_NOT_OK;
+    }
+    if(len > UINT32_MAX){
+        fprintf(stderr, "data length must not exceed 2**32\n");
+        return &DC_OP_NOT_OK;
+    }
     pthread_mutex_lock(&dctx->mutex);
     dc_op_t *op;
 
     if(dctx->rank == 0){
         // chief op may have been created when we received a message
-        op = get_op_for_call_locked(dctx, DC_OP_GATHER, series);
+        op = get_op_for_call_locked(dctx, DC_OP_GATHER, series, slen);
         if(!op) goto fail;
 
         #define OP op->u.gather.chief
@@ -647,7 +562,7 @@ static dc_op_t *dctx_gather_start_ex(
         #undef OP
     }else{
         // workers gather ops are never reused, just create a new one
-        op = dc_op_new(dctx, DC_OP_GATHER, series);
+        op = dc_op_new(dctx, DC_OP_GATHER, series, slen);
         if(!op) goto fail;
         link_list_append(&dctx->a.inflight, &op->link);
 
@@ -666,38 +581,38 @@ static dc_op_t *dctx_gather_start_ex(
 fail:
     pthread_mutex_unlock(&dctx->mutex);
     free(data);
-    return NULL;
+    return &DC_OP_NOT_OK;
 }
 
 dc_op_t *dctx_gather_start(
-    dctx_t *dctx, const char *series, char *data, size_t len
+    dctx_t *dctx, const char *series, size_t slen, char *data, size_t len
 ){
     // we own data
-    return dctx_gather_start_ex(dctx, series, data, NULL, len);
+    return dctx_gather_start_ex(dctx, series, slen, data, NULL, len);
 }
 
 dc_op_t *dctx_gather_start_copy(
-    dctx_t *dctx, const char *series, const char *data, size_t len
+    dctx_t *dctx, const char *series, size_t slen, const char *data, size_t len
 ){
     char *copy = bytesdup(data, len);
     if(!copy){
         perror("malloc");
-        return NULL;
+        return &DC_OP_NOT_OK;
     }
     // we own copy
-    return dctx_gather_start_ex(dctx, series, copy, NULL, len);
+    return dctx_gather_start_ex(dctx, series, slen, copy, NULL, len);
 }
 
 dc_op_t *dctx_gather_start_nofree(
-    dctx_t *dctx, const char *series, const char *data, size_t len
+    dctx_t *dctx, const char *series, size_t slen, const char *data, size_t len
 ){
     if(dctx->rank == 0){
         // chief always makes a copy of data
-        return dctx_gather_start_copy(dctx, series, data, len);
+        return dctx_gather_start_copy(dctx, series, slen, data, len);
     }else{
         char *_data = NULL;
         const char *_nofree = data;
         // worker will cause dc_op_await to block until data is not needed
-        return dctx_gather_start_ex(dctx, series, _data, _nofree, len);
+        return dctx_gather_start_ex(dctx, series, slen, _data, _nofree, len);
     }
 }

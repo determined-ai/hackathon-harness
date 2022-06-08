@@ -95,13 +95,9 @@ void conn_cb(uv_connect_t *req, int status){
     dctx->client.gai = NULL;
 
     // send our rank as our first message
-    char buf[5] = {0};
-    buf[0] = 'i';
-    buf[1] = (char)(0xFF & (dctx->rank >> 3));
-    buf[2] = (char)(0xFF & (dctx->rank >> 2));
-    buf[3] = (char)(0xFF & (dctx->rank >> 1));
-    buf[4] = (char)(0xFF & (dctx->rank >> 0));
-    int ret = tcp_write_copy(&dctx->tcp, buf, 5);
+    char buf[INIT_MSG_SIZE] = {0};
+    size_t buflen = marshal_init(buf, dctx->rank);
+    int ret = tcp_write_copy(&dctx->tcp, buf, buflen);
     if(ret) goto fail;
 
     // now we should be promoted to being a peer

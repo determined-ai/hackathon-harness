@@ -153,7 +153,7 @@ static void on_unmarshal(dc_unmarshal_t *u, void *arg){
             rprintf("got non-init message from preinit connection\n");
             goto fail;
         }
-        int i = u->rank;
+        int i = (int)u->rank;
         if(i < 0 || i > dctx->size){
             rprintf("got invalid rank in init message: %d\n", i);
             goto fail;
@@ -177,10 +177,9 @@ static void on_unmarshal(dc_unmarshal_t *u, void *arg){
     // rprintf("read: %.*s\n", (int)u->len, u->body);
 
     // find the op or create a new one
-    dc_op_type_e type = DC_OP_GATHER;
-    const char *series = NULL;
+    dc_op_type_e type = DC_OP_GATHER; // XXX: choose the op correctly
     int rank = conn->rank;
-    dc_op_t *op = get_op_for_recv(dctx, type, series, rank);
+    dc_op_t *op = get_op_for_recv(dctx, type, u->series, u->slen, rank);
     if(!op) goto fail;
 
     // take ownership of the buffer

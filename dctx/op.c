@@ -4,7 +4,13 @@
 
 #include "internal.h"
 
-dc_op_t *dc_op_new(dctx_t *dctx, dc_op_type_e type, const char *series){
+dc_op_t DC_OP_NOT_OK = { .ok = false };
+
+dc_op_t *dc_op_new(dctx_t *dctx, dc_op_type_e type, const char *series, size_t slen){
+    if(slen > 256){
+        rprintf("series length must not exceed 256!\n");
+        return NULL;
+    }
     dc_op_t *op = malloc(sizeof(*op));
     if(!op){
         perror("malloc");
@@ -12,10 +18,11 @@ dc_op_t *dc_op_new(dctx_t *dctx, dc_op_type_e type, const char *series){
     }
     *op = (dc_op_t){
         .type = type,
-        .series = series ? strdup(series) : NULL,
+        .slen = slen,
         .dctx = dctx,
+        .ok = true,
     };
-    if(series && !op->series) goto fail;
+    memcpy(op->series, series, slen);
 
     switch(type){
         case DC_OP_GATHER:
@@ -47,8 +54,6 @@ fail:
 
 // the caller must have removed from the linked list in a thread-safe way
 void dc_op_free(dc_op_t *op, int rank){
-    if(op->series) free(op->series);
-
     switch(op->type){
         case DC_OP_GATHER:
             if(rank == 0){
@@ -133,15 +138,9 @@ bool dc_op_advance(dc_op_t *op){
                     OP.sent = true;
 
                     // write header
-                    char hdr[5] = {0};
-                    uint32_t len = (uint32_t)OP.len;
-                    hdr[0] = 'm';
-                    hdr[1] = (char)(0xFF & (len >> 3));
-                    hdr[2] = (char)(0xFF & (len >> 2));
-                    hdr[3] = (char)(0xFF & (len >> 1));
-                    hdr[4] = (char)(0xFF & (len >> 0));
-
-                    int ret = tcp_write_copy(&dctx->tcp, hdr, 5);
+                    char hdr[GATHER_MSG_HDR_MAXSIZE];
+                    size_t buflen = marshal_gather(hdr, op->series, OP.len);
+                    int ret = tcp_write_copy(&dctx->tcp, hdr, buflen);
                     if(ret) goto fail;
 
                     // configure our write_cb
@@ -158,7 +157,7 @@ bool dc_op_advance(dc_op_t *op){
                         data = i_promise_i_wont_touch(OP.nofree);
                     }
 
-                    ret = tcp_write_ex(&dctx->tcp, data, len, &OP.cb);
+                    ret = tcp_write_ex(&dctx->tcp, data, OP.len, &OP.cb);
                     if(ret) goto fail;
                 }
                 return false;
@@ -172,6 +171,11 @@ fail:
     dctx->failed = true;
     close_everything(dctx);
     return false;
+}
+
+
+bool dc_op_ok(dc_op_t *op){
+    return op->ok;
 }
 
 
@@ -213,20 +217,20 @@ dc_result_t *dc_op_await(dc_op_t *op){
                 #undef OP
             }else{
                 // worker gather
-                result = &OK_EMPTY;
+                result = &DC_RESULT_EMPTY;
             }
             break;
     }
 
 done:
     dc_op_free(op, dctx->rank);
-    return result ? result : &NOT_OK;
+    return result ? result : &DC_RESULT_NOT_OK;
 }
 
 
 // returns NULL on error
 dc_op_t *get_op_for_recv(
-    dctx_t *dctx, dc_op_type_e type, const char *series, int rank
+    dctx_t *dctx, dc_op_type_e type, const char *series, size_t slen, int rank
 ){
     pthread_mutex_lock(&dctx->mutex);
 
@@ -234,16 +238,17 @@ dc_op_t *get_op_for_recv(
     dc_op_t *op, *temp;
     LINK_FOR_EACH_SAFE(op, temp, &dctx->a.inflight, dc_op_t, link){
         if(op->type != type) continue;
-        if(!op->series != !series) continue;
-        if(series && strcmp(op->series, series) != 0) continue;
+        if(!zstreq(op->series, series)) continue;
         switch(op->type){
             case DC_OP_GATHER:
                 if(dctx->rank == 0){
+                    #define OP op->u.gather.chief
                     // chief gather
-                    if(op->u.gather.chief.recvd[rank] == NULL){
+                    if(OP.recvd[rank] == NULL){
                         out = op;
                         goto done;
                     }
+                    #undef OP
                 }else{
                     // worker gather
                     RBUG("worker received a GATHER message");
@@ -253,7 +258,7 @@ dc_op_t *get_op_for_recv(
         }
     }
     // didn't find the op, create a new one
-    out = dc_op_new(dctx, type, series);
+    out = dc_op_new(dctx, type, series, slen);
     if(!out){
         perror("malloc");
         goto done;
@@ -266,15 +271,13 @@ done:
 }
 
 dc_op_t *get_op_for_call_locked(
-    dctx_t *dctx, dc_op_type_e type, const char *series
+    dctx_t *dctx, dc_op_type_e type, const char *series, size_t slen
 ){
     dc_op_t *out = NULL;
     dc_op_t *op, *temp;
-
     LINK_FOR_EACH_SAFE(op, temp, &dctx->a.inflight, dc_op_t, link){
         if(op->type != type) continue;
-        if(!op->series != !series) continue;
-        if(series && strcmp(op->series, series) != 0) continue;
+        if(!zstreq(op->series, series)) continue;
         switch(op->type){
             case DC_OP_GATHER:
                 if(dctx->rank == 0){
@@ -291,7 +294,7 @@ dc_op_t *get_op_for_call_locked(
     }
 
     // didn't find the op, create a new one
-    out = dc_op_new(dctx, type, series);
+    out = dc_op_new(dctx, type, series, slen);
     if(!out){
         perror("malloc");
         goto done;

@@ -28,6 +28,7 @@ struct dc_op;
 typedef struct dc_op dc_op_t;
 
 // get a dc_result after a dc_op completes
+bool dc_op_ok(dc_op_t *op);
 dc_result_t *dc_op_await(dc_op_t *op);
 
 // only support an opaque pointer
@@ -72,12 +73,12 @@ void dctx_close2(dctx_t *dctx);
 // guarantees an eventual call to free(data)
 // (technically the chief's data is passed back out as dc_result_take)
 dc_op_t *dctx_gather_start(
-    dctx_t *dctx, const char *series, char *data, size_t len
+    dctx_t *dctx, const char *series, size_t slen, char *data, size_t len
 );
 
 // copies data (and frees the copy later)
 dc_op_t *dctx_gather_start_copy(
-    dctx_t *dctx, const char *series, const char *data, size_t len
+    dctx_t *dctx, const char *series, size_t slen, const char *data, size_t len
 );
 
 // caller is required to preserve data until after dctx_gather_end()
@@ -85,5 +86,5 @@ dc_op_t *dctx_gather_start_copy(
    be returned by dc_result_take, to match the memory requirements of the
    worker results, which always require freeing after dc_result_take. */
 dc_op_t *dctx_gather_start_nofree(
-    dctx_t *dctx, const char *series, const char *data, size_t len
+    dctx_t *dctx, const char *series, size_t slen, const char *data, size_t len
 );
