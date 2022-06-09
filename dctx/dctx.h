@@ -97,3 +97,14 @@ dc_op_t *dctx_broadcast_copy(
 );
 /* there's no dctx_broadcast_nofree, since the chief would always make a
    copy, so just use  dctx_broadcast_copy */
+
+
+dc_op_t *dctx_allgather(
+    dctx_t *dctx, const char *series, size_t slen, char *data, size_t len
+);
+dc_op_t *dctx_allgather_copy(
+    dctx_t *dctx, const char *series, size_t slen, const char *data, size_t len
+);
+dc_op_t *dctx_allgather_nofree(
+    dctx_t *dctx, const char *series, size_t slen, const char *data, size_t len
+);

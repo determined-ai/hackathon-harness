@@ -1,6 +1,7 @@
 typedef enum {
     DC_OP_GATHER,
     DC_OP_BROADCAST,
+    DC_OP_ALLGATHER,
 } dc_op_type_e;
 
 struct dc_op {
@@ -22,12 +23,10 @@ struct dc_op {
     union {
         union {
             // a chief gather is complete when nrecvd == dctx->size
-            // (gather_start counts for one nrecvd)
+            // (gather call counts for one nrecvd)
             struct {
-                // client messages we have received
                 char **recvd;
                 size_t *len;
-                // count of client msgs
                 size_t nrecvd;
             } chief;
             // a worker gather is complete when the dc_op_write_cb finishes
@@ -48,8 +47,8 @@ struct dc_op {
                 bool write_started;
                 char *data;
                 size_t len;
-                size_t nsent;
                 dc_write_cb_t cb;
+                size_t nsent;
             } chief;
             /* a worker broadcast is complete when it receives the message and
                has a matching broadcast call */
@@ -59,6 +58,34 @@ struct dc_op {
                 size_t len;
             } worker;
         } broadcast;
+        union {
+            // a chief allgather is complete when all dc_op_write_cbs finish
+            // (allgather call counts for one nrecvd)
+            struct {
+                // what workers send to us
+                // worker messages we have received
+                char **recvd;
+                size_t *len;
+                size_t nrecvd;
+                // what we send to workers
+                bool write_started;
+                dc_write_cb_t cb;
+                size_t nsent;
+            } chief;
+            // a worker allgather is complete when it receives the all messages
+            struct {
+                // what we send to the chief
+                char *data;
+                const char *nofree;
+                size_t datalen;
+                bool sent;
+                dc_write_cb_t cb;
+                // what the chief sends back
+                char **recvd;
+                size_t *len;
+                size_t nrecvd;
+            } worker;
+        } allgather;
     } u;
 };
 DEF_CONTAINER_OF(dc_op_t, link, link_t)

@@ -6,7 +6,39 @@
 
 dc_op_t DC_OP_NOT_OK = { .ok = false };
 
-dc_op_t *dc_op_new(dctx_t *dctx, dc_op_type_e type, const char *series, size_t slen){
+static int malloc_op_recvd_and_len(int n, char*** recvd_out, size_t **len_out){
+    size_t size = (size_t)n;
+    char **recvd = malloc(size * sizeof(*recvd));
+    if(!recvd) goto fail;
+    size_t *len = malloc(size * sizeof(*len));
+    if(!len) goto fail_recvd;
+    memset(recvd, 0, size * sizeof(*recvd));
+    memset(len, 0, size * sizeof(*len));
+    *len_out = len;
+    *recvd_out = recvd;
+    return 0;
+
+fail_recvd:
+    free(recvd);
+fail:
+    perror("malloc");
+    return 1;
+}
+
+static void free_op_recvd_and_len(int n, char** recvd, size_t *len){
+    size_t size = (size_t)n;
+    if(recvd){
+        for(size_t i = 0; i < size; i++){
+            if(recvd[i]) free(recvd[i]);
+        }
+        free(recvd);
+    }
+    if(len) free(len);
+}
+
+dc_op_t *dc_op_new(
+    dctx_t *dctx, dc_op_type_e type, const char *series, size_t slen
+){
     if(slen > 256){
         rprintf("series length must not exceed 256!\n");
         return NULL;
@@ -28,16 +60,10 @@ dc_op_t *dc_op_new(dctx_t *dctx, dc_op_type_e type, const char *series, size_t s
         case DC_OP_GATHER:
             if(dctx->rank == 0){
                 #define OP op->u.gather.chief
-                // allocate and zeroize OP.recvd
-                size_t n = (size_t)dctx->size * sizeof(*OP.recvd);
-                OP.recvd = malloc(n);
-                if(!OP.recvd) goto fail;
-                memset(OP.recvd, 0, n);
-                // allocate and zeroize OP.len
-                n = (size_t)dctx->size * sizeof(*OP.len);
-                OP.len = malloc(n);
-                if(!OP.len) goto fail;
-                memset(OP.len, 0, n);
+                int ret = malloc_op_recvd_and_len(
+                    dctx->size, &OP.recvd, &OP.len
+                );
+                if(ret) goto fail;
                 #undef OP
             }else{
                 // worker gather: nothing to allocate
@@ -46,6 +72,24 @@ dc_op_t *dc_op_new(dctx_t *dctx, dc_op_type_e type, const char *series, size_t s
 
         case DC_OP_BROADCAST:
             // nothing to allocate
+            break;
+
+        case DC_OP_ALLGATHER:
+            if(dctx->rank == 0){
+                #define OP op->u.allgather.chief
+                int ret = malloc_op_recvd_and_len(
+                    dctx->size, &OP.recvd, &OP.len
+                );
+                if(ret) goto fail;
+                #undef OP
+            }else{
+                #define OP op->u.allgather.worker
+                int ret = malloc_op_recvd_and_len(
+                    dctx->size, &OP.recvd, &OP.len
+                );
+                if(ret) goto fail;
+                #undef OP
+            }
             break;
     }
 
@@ -63,13 +107,7 @@ void dc_op_free(dc_op_t *op){
         case DC_OP_GATHER:
             if(dctx->rank == 0){
                 #define OP op->u.gather.chief
-                if(OP.recvd){
-                    for(size_t i = 0; i < (size_t)dctx->size; i++){
-                        if(OP.recvd[i]) free(OP.recvd[i]);
-                    }
-                    free(OP.recvd);
-                }
-                if(OP.len) free(OP.len);
+                free_op_recvd_and_len(dctx->size, OP.recvd, OP.len);
                 #undef OP
             }else{
                 #define OP op->u.gather.worker
@@ -86,6 +124,18 @@ void dc_op_free(dc_op_t *op){
             }else{
                 #define OP op->u.broadcast.worker
                 if(OP.recvd) free(OP.recvd);
+                #undef OP
+            }
+            break;
+
+        case DC_OP_ALLGATHER:
+            if(dctx->rank == 0){
+                #define OP op->u.allgather.chief
+                free_op_recvd_and_len(dctx->size, OP.recvd, OP.len);
+                #undef OP
+            }else{
+                #define OP op->u.allgather.worker
+                free_op_recvd_and_len(dctx->size, OP.recvd, OP.len);
                 #undef OP
             }
             break;
@@ -121,7 +171,7 @@ void dc_op_write_cb(dc_op_t *op){
                 goto fail;
             }else{
                 #define OP op->u.gather.worker
-                // free OP.data if present, but don't touch OP.constdata
+                // free OP.data if present, but don't touch OP.nofree
                 if(OP.data){
                     free(OP.data);
                     OP.data = NULL;
@@ -144,6 +194,26 @@ void dc_op_write_cb(dc_op_t *op){
             }else{
                 RBUG("worker doesn't send anything for broadcast");
                 goto fail;
+            }
+            break;
+
+        case DC_OP_ALLGATHER:
+            if(dctx->rank == 0){
+                #define OP op->u.allgather.chief
+                if(++OP.nsent == dctx->server.npeers){
+                    // leave recvd for dc_op_await
+                    // operation is now complete
+                    mark_op_completed_and_notify(op);
+                }
+                #undef OP
+            }else{
+                #define OP op->u.allgather.worker
+                // free OP.data if present, but don't touch OP.nofree
+                if(OP.data){
+                    free(OP.data);
+                    OP.data = NULL;
+                }
+                #undef OP
             }
             break;
     }
@@ -231,6 +301,79 @@ bool dc_op_advance(dc_op_t *op){
                 return false;
             }
             break;
+
+        case DC_OP_ALLGATHER:
+            if(dctx->rank == 0){
+                #define OP op->u.allgather.chief
+                // chief allgather
+                if(OP.nrecvd != (size_t)dctx->size) return false;
+                if(OP.write_started) return false;
+                OP.write_started = true;
+
+                // configure our write_cb
+                OP.cb = (dc_write_cb_t){
+                    .type = WRITE_CB_OP,
+                    .u = { .op = op },
+                };
+
+                // write to every peer
+                for(size_t i = 0; i < dctx->server.npeers; i++){
+                    dc_conn_t *conn = dctx->server.peers[i+1];
+                    // write each recvd to each peer
+                    for(int j = 0; j < dctx->size; j++){
+                        char *data = OP.recvd[j];
+                        size_t len = OP.len[j];
+                        char hdr[ALLGATHER_MSG_HDR_MAXSIZE];
+                        size_t buflen = marshal_allgather(
+                            hdr, op->series, op->slen, (uint32_t)j, len
+                        );
+                        ret = tcp_write_copy(&conn->tcp, hdr, buflen);
+                        if(ret) goto fail;
+
+                        ret = tcp_write_ex(&conn->tcp, data, len, &OP.cb);
+                        if(ret) goto fail;
+                    }
+                }
+                return false;
+                #undef OP
+            }else{
+                #define OP op->u.allgather.worker
+                // worker allgather
+                if(OP.sent) return false;
+                OP.sent = true;
+
+                // write header
+                char hdr[ALLGATHER_MSG_HDR_MAXSIZE];
+                size_t buflen = marshal_allgather(
+                    hdr,
+                    op->series,
+                    op->slen,
+                    (uint32_t)dctx->rank,
+                    (size_t)OP.datalen
+                );
+                ret = tcp_write_copy(&dctx->tcp, hdr, buflen);
+                if(ret) goto fail;
+
+                // configure our write_cb
+                OP.cb = (dc_write_cb_t){
+                    .type = WRITE_CB_OP,
+                    .u = { .op = op },
+                };
+
+                // choose which data to send
+                char *data;
+                if(OP.data){
+                    data = OP.data;
+                }else{
+                    data = i_promise_i_wont_touch(OP.nofree);
+                }
+
+                ret = tcp_write_ex(&dctx->tcp, data, OP.datalen, &OP.cb);
+                if(ret) goto fail;
+                return false;
+                #undef OP
+            }
+            break;
     }
     return false;
 
@@ -307,6 +450,34 @@ dc_result_t *dc_op_await(dc_op_t *op){
                 #undef OP
             }
             break;
+
+        case DC_OP_ALLGATHER:
+            if(dctx->rank == 0){
+                // chief allgather, return all recvd
+                #define OP op->u.allgather.chief
+                result = dc_result_new((size_t)dctx->size);
+                if(!result) goto done;
+                for(int i = 0; i < dctx->size; i++){
+                    dc_result_set(
+                        result, (size_t)i, OP.recvd[i], (size_t)OP.len[i]
+                    );
+                    OP.recvd[i] = NULL;
+                }
+                #undef OP
+            }else{
+                #define OP op->u.allgather.worker
+                // worker allgather, return all recvd
+                result = dc_result_new((size_t)dctx->size);
+                if(!result) goto done;
+                for(int i = 0; i < dctx->size; i++){
+                    dc_result_set(
+                        result, (size_t)i, OP.recvd[i], (size_t)OP.len[i]
+                    );
+                    OP.recvd[i] = NULL;
+                }
+                #undef OP
+            }
+            break;
     }
 
 done:
@@ -357,9 +528,32 @@ dc_op_t *get_op_for_recv(
                     #undef OP
                 }
                 break;
+
+            case DC_OP_ALLGATHER:
+                if(dctx->rank == 0){
+                    #define OP op->u.allgather.chief
+                    // chief allgather
+                    if(OP.recvd[rank] == NULL){
+                        out = op;
+                        goto done;
+                    }
+                    #undef OP
+                }else{
+                    #define OP op->u.allgather.worker
+                    // worker allgather
+                    if(OP.recvd[rank] == NULL){
+                        out = op;
+                        goto done;
+                    }
+                    #undef OP
+                }
+                break;
         }
     }
     // didn't find the op, create a new one
+    if(dctx->rank > 0 && type == DC_OP_ALLGATHER){
+        RBUG("worker did not find matching ALLGATHER on recv\n");
+    }
     out = dc_op_new(dctx, type, series, slen);
     if(!out){
         perror("malloc");
@@ -392,18 +586,35 @@ dc_op_t *get_op_for_call_locked(
                     }
                     #undef OP
                 }else{
-                    // worker gathers are never reused
+                    // worker gathers are not created on recv, make a new one
                 }
                 break;
 
             case DC_OP_BROADCAST:
                 if(dctx->rank == 0){
-                    // chief broadcast is never reusued
+                    // chief broadcasts are not created on recv, make a new one
                 }else{
                     #define OP op->u.broadcast.worker
                     // worker broadcast, match the first inflight in-series op
                     out = op;
                     goto done;
+                    #undef OP
+                }
+                break;
+
+            case DC_OP_ALLGATHER:
+                if(dctx->rank == 0){
+                    #define OP op->u.allgather.chief
+                    // chief allgather
+                    if(OP.recvd[0] == NULL){
+                        // here's a gather without its chief data yet
+                        out = op;
+                        goto done;
+                    }
+                    #undef OP
+                }else{
+                    #define OP op->u.allgather.worker
+                    // worker allgathers are not created on recv
                     #undef OP
                 }
                 break;

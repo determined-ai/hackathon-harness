@@ -200,6 +200,23 @@ static void on_unmarshal(dc_unmarshal_t *u, void *arg){
             #undef OP
             break;
 
+        case 'a':
+            // find the op for u->rank
+            op = get_op_for_recv(
+                dctx, DC_OP_ALLGATHER, u->series, u->slen, (int)u->rank
+            );
+            if(!op) goto fail;
+
+            #define OP op->u.allgather.worker
+            OP.len[u->rank] = u->len;
+            OP.recvd[u->rank] = u->body;
+            u->body = NULL;
+            if(++OP.nrecvd == (size_t)dctx->size){
+                mark_op_completed_and_notify(op);
+            }
+            #undef OP
+            break;
+
         default:
             RBUG("unknown unmarshal type");
             break;

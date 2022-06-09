@@ -570,7 +570,7 @@ static dc_op_t *dctx_gather_ex(
         }
         #undef OP
     }else{
-        // workers gather ops are never reused, just create a new one
+        // workers gather ops are never cretaed on recv, create a new one
         op = dc_op_new(dctx, DC_OP_GATHER, series, slen);
         if(!op) goto fail_mutex;
         link_list_append(&dctx->a.inflight, &op->link);
@@ -647,7 +647,7 @@ static dc_op_t *dctx_broadcast_ex(
     dc_op_t *op;
 
     if(dctx->rank == 0){
-        // chief broadcast ops are never reused, just create a new one
+        // chief broadcast ops are never created on recv, create a new one
         op = dc_op_new(dctx, DC_OP_BROADCAST, series, slen);
         if(!op) goto fail_mutex;
         link_list_append(&dctx->a.inflight, &op->link);
@@ -704,5 +704,95 @@ dc_op_t *dctx_broadcast_copy(
     }else{
         // worker ignores data
         return dctx_broadcast_ex(dctx, series, slen, NULL, len);
+    }
+}
+
+static dc_op_t *dctx_allgather_ex(
+    dctx_t *dctx,
+    const char *series,
+    size_t slen,
+    char *data,
+    const char *nofree,
+    size_t len
+){
+    if(zstrnlen(series, 257) > 256){
+        fprintf(stderr, "series name length must not exceed 256\n");
+        goto fail;
+    }
+    if(len > UINT32_MAX){
+        fprintf(stderr, "data length must not exceed 2**32\n");
+        goto fail;
+    }
+    pthread_mutex_lock(&dctx->mutex);
+    dc_op_t *op;
+
+    if(dctx->rank == 0){
+        // chief op may have been created when we received a message
+        op = get_op_for_call_locked(dctx, DC_OP_ALLGATHER, series, slen);
+        if(!op) goto fail_mutex;
+
+        #define OP op->u.allgather.chief
+        OP.recvd[0] = data;
+        OP.len[0] = len;
+        if(++OP.nrecvd == (size_t)dctx->size){
+            // trigger some work in the loop
+            uv_async_send(&dctx->async);
+        }
+        #undef OP
+    }else{
+        // workers allgather ops are never created on recv, create a new one
+        op = dc_op_new(dctx, DC_OP_ALLGATHER, series, slen);
+        if(!op) goto fail_mutex;
+        link_list_append(&dctx->a.inflight, &op->link);
+
+        #define OP op->u.allgather.worker
+        OP.data = data;
+        OP.nofree = nofree;
+        OP.datalen = len;
+        // trigger some work in the loop
+        uv_async_send(&dctx->async);
+        #undef OP
+    }
+
+    pthread_mutex_unlock(&dctx->mutex);
+    return op;
+
+fail_mutex:
+    pthread_mutex_unlock(&dctx->mutex);
+fail:
+    free(data);
+    return &DC_OP_NOT_OK;
+}
+
+dc_op_t *dctx_allgather(
+    dctx_t *dctx, const char *series, size_t slen, char *data, size_t len
+){
+    // we own data
+    return dctx_allgather_ex(dctx, series, slen, data, NULL, len);
+}
+
+dc_op_t *dctx_allgather_copy(
+    dctx_t *dctx, const char *series, size_t slen, const char *data, size_t len
+){
+    char *copy = bytesdup(data, len);
+    if(!copy){
+        perror("malloc");
+        return &DC_OP_NOT_OK;
+    }
+    // we own copy
+    return dctx_allgather_ex(dctx, series, slen, copy, NULL, len);
+}
+
+dc_op_t *dctx_allgather_nofree(
+    dctx_t *dctx, const char *series, size_t slen, const char *data, size_t len
+){
+    if(dctx->rank == 0){
+        // chief always makes a copy of data
+        return dctx_allgather_copy(dctx, series, slen, data, len);
+    }else{
+        char *_data = NULL;
+        const char *_nofree = data;
+        // worker will cause dc_op_await to block until data is not needed
+        return dctx_allgather_ex(dctx, series, slen, _data, _nofree, len);
     }
 }

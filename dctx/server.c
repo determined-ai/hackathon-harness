@@ -183,10 +183,6 @@ static void on_unmarshal(dc_unmarshal_t *u, void *arg){
             rprintf("got init message from post-init peer: %d\n", conn->rank);
             goto fail;
 
-        case 'b':
-            rprintf("got broadcast message on client\n");
-            goto fail;
-
         case 'g':
             // find the op or create a new one
             op = get_op_for_recv(
@@ -200,6 +196,28 @@ static void on_unmarshal(dc_unmarshal_t *u, void *arg){
             u->body = NULL;
             if(++OP.nrecvd == (size_t)dctx->size){
                 mark_op_completed_and_notify(op);
+            }
+            #undef OP
+            break;
+
+        case 'b':
+            rprintf("got broadcast message on client\n");
+            goto fail;
+
+        case 'a':
+            // find the op or create a new one
+            op = get_op_for_recv(
+                dctx, DC_OP_ALLGATHER, u->series, u->slen, conn->rank
+            );
+            if(!op) goto fail;
+
+            #define OP op->u.allgather.chief
+            OP.len[rank] = u->len;
+            OP.recvd[rank] = u->body;
+            u->body = NULL;
+            if(++OP.nrecvd == (size_t)dctx->size){
+                // trigger the broadcast
+                uv_async_send(&dctx->async);
             }
             #undef OP
             break;

@@ -65,6 +65,7 @@ gather(dctx::DistributedContext, obj::Any; series::String = "") = begin
     serialize(io, obj)
     # get the content of the buffer (without a copy)
     data = take!(io)
+
     # call dctx_gather with the serialized data
     dc_op = ccall((:dctx_gather_nofree, "libdctx"), Ptr{Cvoid},
         (Ptr{Cvoid}, Ptr{UInt8}, Csize_t, Ptr{UInt8}, Csize_t),
@@ -86,6 +87,7 @@ broadcast(dctx::DistributedContext, obj::Any; series::String = "") = begin
         # get the content of the buffer (without a copy)
         data = take!(io)
     end
+
     # call dctx_broadcast with the serialized data
     dc_op = ccall((:dctx_broadcast_copy, "libdctx"), Ptr{Cvoid},
         (Ptr{Cvoid}, Ptr{UInt8}, Csize_t, Ptr{UInt8}, Csize_t),
@@ -97,6 +99,25 @@ broadcast(dctx::DistributedContext, obj::Any; series::String = "") = begin
 
     # no need to keep a ref for broadcast, since chief always copies
     DistributedOperation(dc_op, true, Ref(0))
+end
+
+allgather(dctx::DistributedContext, obj::Any; series::String = "") = begin
+    # serialize the object
+    io = IOBuffer()
+    serialize(io, obj)
+    # get the content of the buffer (without a copy)
+    data = take!(io)
+
+    # call dctx_allgather with the serialized data
+    dc_op = ccall((:dctx_allgather_nofree, "libdctx"), Ptr{Cvoid},
+        (Ptr{Cvoid}, Ptr{UInt8}, Csize_t, Ptr{UInt8}, Csize_t),
+        dctx._dctx, series, length(series), data, length(data))
+    ok = ccall((:dc_op_ok, "libdctx"), Cuchar, (Ptr{Cvoid},), dc_op)
+    if ok != 1
+        error("dctx_broadcast failed")
+    end
+
+    DistributedOperation(dc_op, false, Ref(data))
 end
 
 await(dc_op::DistributedOperation) = begin
@@ -170,53 +191,69 @@ chief = DistributedContext(0, 3, 0, 0, 0, 0, "localhost", "1234")
 worker1 = DistributedContext(1, 3, 0, 0, 0, 0, "localhost", "1234")
 worker2 = DistributedContext(2, 3, 0, 0, 0, 0, "localhost", "1234")
 
-# worker 2 will start gathers in opposite order
+# submit ops in arbitrary order
 
-g0a = gather(chief, "chief", series="a")
-g1a = gather(worker1, "worker1", series="a")
-g2b = gather(worker2, 2, series="b")
+a2x = allgather(worker2, "ag2", series="x")
 
-b0a = broadcast(chief, "bchief", series="a")
+g0x = gather(chief, "chief", series="x")
+g1x = gather(worker1, "worker1", series="x")
+g2y = gather(worker2, 2, series="y")
 
-g0b = gather(chief, "CHIEF", series="b")
-g1b = gather(worker1, "WORKER1", series="b")
-g2a = gather(worker2, "two", series="a")
+b0x = broadcast(chief, "bchief", series="x")
 
-b1a = broadcast(worker1, "", series="a")
-b2a = broadcast(worker2, "", series="a")
+a1x = allgather(worker1, "ag1", series="x")
 
-rg0a = await(g0a)
-rg1a = await(g1a)
-rg2a = await(g2a)
+g0y = gather(chief, "CHIEF", series="y")
+g1y = gather(worker1, "WORKER1", series="y")
+g2x = gather(worker2, "two", series="x")
 
-rg0b = await(g0b)
-rg1b = await(g1b)
-rg2b = await(g2b)
+b1x = broadcast(worker1, "", series="x")
+b2x = broadcast(worker2, "", series="x")
 
-println("gather(series=a): ", rg0a)
+a0x = allgather(chief, "ag0", series="x")
 
-if rg0a != ["chief", "worker1", "two"]
+rg0x = await(g0x)
+rg1x = await(g1x)
+rg2x = await(g2x)
+
+rg0y = await(g0y)
+rg1y = await(g1y)
+rg2y = await(g2y)
+
+rb0x = await(b0x)
+rb1x = await(b1x)
+rb2x = await(b2x)
+
+ra0x = await(a0x)
+ra1x = await(a1x)
+ra2x = await(a2x)
+
+println("gather(series=x): ", rg0x)
+
+if rg0x != ["chief", "worker1", "two"]
     error("chief gathered wrong")
 end
 
-println("gather(series=b): ", rg0b)
+println("gather(series=y): ", rg0y)
 
-if rg0b != ["CHIEF", "WORKER1", 2]
+if rg0y != ["CHIEF", "WORKER1", 2]
     error("chief gathered wrong")
 end
 
-if !(rg1a == rg2a == rg1b == rg2b == [])
+if !(rg1x == rg2x == rg1y == rg2y == [])
     error("workers had non-empty gathers")
 end
 
-rb0a = await(b0a)
-rb1a = await(b1a)
-rb2a = await(b2a)
+println("broadcast(series=x): ", rb0x, ", ", rb1x, ", ", rb2x)
 
-println("broadcast(series=b): ", rb0a, ", ", rb1a, ", ", rb2a)
-
-if !(rb0a == rb1a == rb2a == "bchief")
+if !(rb0x == rb1x == rb2x == "bchief")
     error("broadcast was wrong")
+end
+
+println("allgather(series=x): ", ra0x, ", ", ra1x, ", ", ra2x)
+
+if !(ra0x == ra1x == ra2x == ["ag0", "ag1", "ag2"])
+    error("allgather was wrong")
 end
 
 close(chief)
