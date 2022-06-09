@@ -19,7 +19,7 @@ char *dc_result_take(dc_result_t *r, size_t i);
 const char *dc_result_peek(dc_result_t *r, size_t i);
 
 /* dc_op_t*:
-    - created by gather_start*
+    - created by gather* or broadcast*
     - cannot be canceled
     - autmoatically freed during dc_op_await or dctx_close
 */
@@ -72,12 +72,12 @@ void dctx_close2(dctx_t *dctx);
 
 // guarantees an eventual call to free(data)
 // (technically the chief's data is passed back out as dc_result_take)
-dc_op_t *dctx_gather_start(
+dc_op_t *dctx_gather(
     dctx_t *dctx, const char *series, size_t slen, char *data, size_t len
 );
 
 // copies data (and frees the copy later)
-dc_op_t *dctx_gather_start_copy(
+dc_op_t *dctx_gather_copy(
     dctx_t *dctx, const char *series, size_t slen, const char *data, size_t len
 );
 
@@ -85,6 +85,15 @@ dc_op_t *dctx_gather_start_copy(
 /* Note that the chief always makes a copy of the data, which will eventually
    be returned by dc_result_take, to match the memory requirements of the
    worker results, which always require freeing after dc_result_take. */
-dc_op_t *dctx_gather_start_nofree(
+dc_op_t *dctx_gather_nofree(
     dctx_t *dctx, const char *series, size_t slen, const char *data, size_t len
 );
+
+dc_op_t *dctx_broadcast(
+    dctx_t *dctx, const char *series, size_t slen, char *data, size_t len
+);
+dc_op_t *dctx_broadcast_copy(
+    dctx_t *dctx, const char *series, size_t slen, const char *data, size_t len
+);
+/* there's no dctx_broadcast_nofree, since the chief would always make a
+   copy, so just use  dctx_broadcast_copy */

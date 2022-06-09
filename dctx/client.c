@@ -94,10 +94,17 @@ void conn_cb(uv_connect_t *req, int status){
     uv_freeaddrinfo(dctx->client.gai);
     dctx->client.gai = NULL;
 
+    // start reading
+    int ret = uv_read_start((uv_stream_t*)&dctx->tcp, allocator, read_cb);
+    if(ret < 0){
+        uv_perror("uv_read_start", ret);
+        goto fail;
+    }
+
     // send our rank as our first message
     char buf[INIT_MSG_SIZE] = {0};
     size_t buflen = marshal_init(buf, dctx->rank);
-    int ret = tcp_write_copy(&dctx->tcp, buf, buflen);
+    ret = tcp_write_copy(&dctx->tcp, buf, buflen);
     if(ret) goto fail;
 
     // now we should be promoted to being a peer
@@ -162,13 +169,61 @@ static void on_broken_connection(dctx_t *dctx, uv_stream_t *stream){
     close_everything(dctx);
 }
 
+static void on_unmarshal(dc_unmarshal_t *u, void *arg){
+    dctx_t *dctx = arg;
+
+    // rprintf("read: %.*s\n", (int)u->len, u->body);
+
+    dc_op_t *op;
+
+    switch(u->type){
+        case 'i':
+            rprintf("got init message on client\n");
+            goto fail;
+
+        case 'g':
+            rprintf("got gather message on client\n");
+            goto fail;
+
+        case 'b':
+            // find the op or create a new one
+            op = get_op_for_recv(dctx, DC_OP_BROADCAST, u->series, u->slen, 0);
+            if(!op) goto fail;
+
+            #define OP op->u.broadcast.worker
+            OP.len = u->len;
+            OP.recvd = u->body;
+            u->body = NULL;
+            if(OP.called){
+                mark_op_completed_and_notify(op);
+            }
+            #undef OP
+            break;
+
+        default:
+            RBUG("unknown unmarshal type");
+            break;
+    }
+    return;
+
+fail:
+    dctx->failed = true;
+    close_everything(dctx);
+}
+
 static void on_read(
     dctx_t *dctx, uv_stream_t *stream, char *buf, size_t len
 ){
-    (void)dctx;
     (void)stream;
-    (void)len;
-    free(buf);
+
+    int ret = unmarshal(&dctx->client.unmarshal, buf, len, on_unmarshal, dctx);
+    if(ret) goto fail;
+
+    return;
+
+fail:
+    dctx->failed = true;
+    close_everything(dctx);
 }
 
 int init_client(dctx_t *dctx){

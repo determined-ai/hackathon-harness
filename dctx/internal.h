@@ -78,7 +78,6 @@ struct dctx {
     uv_async_t async;
     uv_tcp_t tcp;
     bool tcp_open;
-    dc_unmarshal_t unmarshal;
 
     // closed is set by close_everything
     bool closed;
@@ -110,6 +109,7 @@ struct dctx {
         uv_timer_t timer;
         bool timer_open;
         bool connected;
+        dc_unmarshal_t unmarshal;
     } client;
 
     // called on failed read or failed write

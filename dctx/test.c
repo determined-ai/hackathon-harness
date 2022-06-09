@@ -190,12 +190,15 @@ done:
 
 static int test_dctx(void){
     int retval = 0;
-    dc_result_t *rac = NULL;
-    dc_result_t *ra1 = NULL;
-    dc_result_t *ra2 = NULL;
-    dc_result_t *rbc = NULL;
-    dc_result_t *rb1 = NULL;
-    dc_result_t *rb2 = NULL;
+    dc_result_t *rg0a = NULL;
+    dc_result_t *rg1a = NULL;
+    dc_result_t *rg2a = NULL;
+    dc_result_t *rg0b = NULL;
+    dc_result_t *rg1b = NULL;
+    dc_result_t *rg2b = NULL;
+    dc_result_t *rb0a = NULL;
+    dc_result_t *rb1a = NULL;
+    dc_result_t *rb2a = NULL;
     char *data = NULL;
     int ret;
 
@@ -230,59 +233,86 @@ static int test_dctx(void){
 
     // submit ops in arbitrary order
 
-    dc_op_t *ac = dctx_gather_start_nofree(chief, "a", 1, "chief", 5);
-    dc_op_t *a1 = dctx_gather_start_nofree(worker1, "a", 1, "worker1", 7);
-    dc_op_t *b2 = dctx_gather_start_nofree(worker2, "b", 1, "WORKER 2", 8);
+    dc_op_t *g0a = dctx_gather_nofree(chief, "a", 1, "chief", 5);
+    dc_op_t *g1a = dctx_gather_nofree(worker1, "a", 1, "worker1", 7);
+    dc_op_t *g2b = dctx_gather_nofree(worker2, "b", 1, "WORKER 2", 8);
 
-    dc_op_t *bc = dctx_gather_start_nofree(chief, "b", 1, "CHIEF", 5);
-    dc_op_t *b1 = dctx_gather_start_nofree(worker1, "b", 1, "WORKER1", 7);
-    dc_op_t *a2 = dctx_gather_start_nofree(worker2, "a", 1, "worker 2", 8);
+    dc_op_t *b0a = dctx_broadcast_copy(chief, "a", 1, "bchief", 6);
 
-    ASSERT(dc_op_ok(ac));
-    ASSERT(dc_op_ok(a1));
-    ASSERT(dc_op_ok(a2));
-    ASSERT(dc_op_ok(bc));
-    ASSERT(dc_op_ok(b1));
-    ASSERT(dc_op_ok(b2));
+    dc_op_t *g0b = dctx_gather_nofree(chief, "b", 1, "CHIEF", 5);
+    dc_op_t *g1b = dctx_gather_nofree(worker1, "b", 1, "WORKER1", 7);
+    dc_op_t *g2a = dctx_gather_nofree(worker2, "a", 1, "worker 2", 8);
 
-    // gather ops in arbitrary order
-    rac = dc_op_await(ac);
-    ra1 = dc_op_await(a1);
-    ra2 = dc_op_await(a2);
-    // operation succeeded
-    ASSERT(dc_result_ok(rac));
-    ASSERT(dc_result_ok(ra1));
-    ASSERT(dc_result_ok(ra2));
-    // workers get nothing back
-    ASSERT(dc_result_count(ra1) == 0);
-    ASSERT(dc_result_count(ra2) == 0);
-    ASSERT(dc_result_count(rac) == 3);
-    // chief gets the right results
-    ASSERT_RESULT(rac, 0, "chief");
-    ASSERT_RESULT(rac, 1, "worker1");
-    ASSERT_RESULT(rac, 2, "worker 2");
+    dc_op_t *b1a = dctx_broadcast(worker1, "a", 1, NULL, 0);
+    dc_op_t *b2a = dctx_broadcast(worker2, "a", 1, NULL, 0);
 
-    rbc = dc_op_await(bc);
-    rb1 = dc_op_await(b1);
-    rb2 = dc_op_await(b2);
-    ASSERT(dc_result_ok(rbc));
-    ASSERT(dc_result_ok(rb1));
-    ASSERT(dc_result_ok(rb2));
-    ASSERT(dc_result_count(rb1) == 0);
-    ASSERT(dc_result_count(rb2) == 0);
-    ASSERT(dc_result_count(rbc) == 3);
-    ASSERT_RESULT(rbc, 0, "CHIEF");
-    ASSERT_RESULT(rbc, 1, "WORKER1");
-    ASSERT_RESULT(rbc, 2, "WORKER 2");
+    ASSERT(dc_op_ok(g0a));
+    ASSERT(dc_op_ok(g1a));
+    ASSERT(dc_op_ok(g2a));
+    ASSERT(dc_op_ok(g0b));
+    ASSERT(dc_op_ok(g1b));
+    ASSERT(dc_op_ok(g2b));
+    ASSERT(dc_op_ok(b0a));
+    ASSERT(dc_op_ok(b1a));
+    ASSERT(dc_op_ok(b2a));
+
+    // await ops in arbitrary order
+
+    // gather series=a
+    rg0a = dc_op_await(g0a);
+    rg1a = dc_op_await(g1a);
+    rg2a = dc_op_await(g2a);
+    ASSERT(dc_result_ok(rg0a));
+    ASSERT(dc_result_ok(rg1a));
+    ASSERT(dc_result_ok(rg2a));
+    ASSERT(dc_result_count(rg1a) == 0);
+    ASSERT(dc_result_count(rg2a) == 0);
+    ASSERT(dc_result_count(rg0a) == 3);
+    ASSERT_RESULT(rg0a, 0, "chief");
+    ASSERT_RESULT(rg0a, 1, "worker1");
+    ASSERT_RESULT(rg0a, 2, "worker 2");
+
+    // gather series=b
+    rg0b = dc_op_await(g0b);
+    rg1b = dc_op_await(g1b);
+    rg2b = dc_op_await(g2b);
+    ASSERT(dc_result_ok(rg0b));
+    ASSERT(dc_result_ok(rg1b));
+    ASSERT(dc_result_ok(rg2b));
+    ASSERT(dc_result_count(rg1b) == 0);
+    ASSERT(dc_result_count(rg2b) == 0);
+    ASSERT(dc_result_count(rg0b) == 3);
+    ASSERT_RESULT(rg0b, 0, "CHIEF");
+    ASSERT_RESULT(rg0b, 1, "WORKER1");
+    ASSERT_RESULT(rg0b, 2, "WORKER 2");
+
+    // broadcast series=b
+    rb0a = dc_op_await(b0a);
+    rb1a = dc_op_await(b1a);
+    rb2a = dc_op_await(b2a);
+    ASSERT(dc_result_ok(rb0a));
+    ASSERT(dc_result_ok(rb1a));
+    ASSERT(dc_result_ok(rb2a));
+    ASSERT(dc_result_count(rb1a) == 1);
+    ASSERT(dc_result_count(rb2a) == 1);
+    ASSERT(dc_result_count(rb0a) == 1);
+    ASSERT_RESULT(rb0a, 0, "bchief");
+    ASSERT_RESULT(rb1a, 0, "bchief");
+    ASSERT_RESULT(rb2a, 0, "bchief");
+
+    #undef ASSERT_RESULT
 
 done:
     free(data);
-    dc_result_free(&rac);
-    dc_result_free(&ra1);
-    dc_result_free(&ra2);
-    dc_result_free(&rbc);
-    dc_result_free(&rb1);
-    dc_result_free(&rb2);
+    dc_result_free(&rg0a);
+    dc_result_free(&rg1a);
+    dc_result_free(&rg2a);
+    dc_result_free(&rg0b);
+    dc_result_free(&rg1b);
+    dc_result_free(&rg2b);
+    dc_result_free(&rb0a);
+    dc_result_free(&rb1a);
+    dc_result_free(&rb2a);
 
     dctx_close(&chief);
     dctx_close(&worker1);

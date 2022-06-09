@@ -1,5 +1,6 @@
 typedef enum {
     DC_OP_GATHER,
+    DC_OP_BROADCAST,
 } dc_op_type_e;
 
 struct dc_op {
@@ -40,6 +41,24 @@ struct dc_op {
                 dc_write_cb_t cb;
             } worker;
         } gather;
+        union {
+            // a chief broadcast is complete when all dc_op_write_cbs finish
+            struct {
+                // chief always copies the input data
+                bool write_started;
+                char *data;
+                size_t len;
+                size_t nsent;
+                dc_write_cb_t cb;
+            } chief;
+            /* a worker broadcast is complete when it receives the message and
+               has a matching broadcast call */
+            struct {
+                bool called;
+                char *recvd;
+                size_t len;
+            } worker;
+        } broadcast;
     } u;
 };
 DEF_CONTAINER_OF(dc_op_t, link, link_t)

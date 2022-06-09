@@ -173,25 +173,31 @@ static void on_unmarshal(dc_unmarshal_t *u, void *arg){
         return;
     }
 
-    // non-preinit: store message for rank and stop reading
     // rprintf("read: %.*s\n", (int)u->len, u->body);
 
-    // find the op or create a new one
-    dc_op_type_e type = DC_OP_GATHER; // XXX: choose the op correctly
     int rank = conn->rank;
-    dc_op_t *op = get_op_for_recv(dctx, type, u->series, u->slen, rank);
-    if(!op) goto fail;
+    dc_op_t *op;
 
-    // take ownership of the buffer
-    char *body = u->body;
-    size_t len = u->len;
-    u->body = NULL;
+    switch(u->type){
+        case 'i':
+            rprintf("got init message from post-init peer: %d\n", conn->rank);
+            goto fail;
 
-    switch(op->type){
-        case DC_OP_GATHER:
+        case 'b':
+            rprintf("got broadcast message on client\n");
+            goto fail;
+
+        case 'g':
+            // find the op or create a new one
+            op = get_op_for_recv(
+                dctx, DC_OP_GATHER, u->series, u->slen, conn->rank
+            );
+            if(!op) goto fail;
+
             #define OP op->u.gather.chief
-            OP.recvd[rank] = body;
-            OP.len[rank] = len;
+            OP.len[rank] = u->len;
+            OP.recvd[rank] = u->body;
+            u->body = NULL;
             if(++OP.nrecvd == (size_t)dctx->size){
                 mark_op_completed_and_notify(op);
             }

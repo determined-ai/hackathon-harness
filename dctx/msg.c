@@ -12,8 +12,9 @@ size_t marshal_init(char *buf, int rank){
     return 5;
 }
 
-size_t marshal_gather(char *buf, const char *series, size_t body_len){
-    size_t slen = zstrlen(series);
+static size_t marshal_b_or_g(
+    char type, char *buf, const char *series, size_t slen, size_t body_len
+){
     if(slen > 256){
         BUG("series length too long\n");
         exit(1);
@@ -22,7 +23,7 @@ size_t marshal_gather(char *buf, const char *series, size_t body_len){
         BUG("body_len too long\n");
         exit(1);
     }
-    buf[0] = 'g';
+    buf[0] = type;
     buf[1] = (char)(0xFF & slen);
     memcpy(&buf[2], series, slen);
     buf[slen+2] = (char)(0xFF & (body_len >> 3));
@@ -30,6 +31,19 @@ size_t marshal_gather(char *buf, const char *series, size_t body_len){
     buf[slen+4] = (char)(0xFF & (body_len >> 1));
     buf[slen+5] = (char)(0xFF & (body_len >> 0));
     return slen + 6;
+}
+
+size_t marshal_gather(
+    char *buf, const char *series, size_t slen, size_t body_len
+){
+    return marshal_b_or_g('g', buf, series, slen, body_len);
+}
+
+
+size_t marshal_broadcast(
+    char *buf, const char *series, size_t slen, size_t body_len
+){
+    return marshal_b_or_g('b', buf, series, slen, body_len);
 }
 
 int unmarshal(
@@ -59,6 +73,7 @@ start:
         switch(c){
             case 'i': // "i"nit
             case 'g': // "g"ather
+            case 'b': // "b"roadcast
                 u->type = c;
                 break;
 
@@ -98,6 +113,7 @@ start:
             goto start;
 
         case 'g':
+        case 'b':
             // fill in the slen
             if(MPOS == 1){ u->slen = TAKE_BYTE(); CKLEN; }
 

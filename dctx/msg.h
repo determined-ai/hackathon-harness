@@ -17,7 +17,16 @@ size_t marshal_init(char *buf, int rank);
 // gather msg format: gUseriesNNNNbody (U = series len, NNNN = body len)
 // (1 + 1 + 256 + 4)
 #define GATHER_MSG_HDR_MAXSIZE 262 // 1 + 1 + 256 + 4
-size_t marshal_gather(char *buf, const char *series, size_t body_len);
+size_t marshal_gather(
+    char *buf, const char *series, size_t slen, size_t body_len
+);
+
+// broadcast msg format: bUseriesNNNNbody (U = series len, NNNN = body len)
+// (1 + 1 + 256 + 4)
+#define BROADCAST_MSG_HDR_MAXSIZE 262 // 1 + 1 + 256 + 4
+size_t marshal_broadcast(
+    char *buf, const char *series, size_t slen, size_t body_len
+);
 
 // calls on_unmarshal once for every message found
 int unmarshal(
