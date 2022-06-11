@@ -57,3 +57,10 @@ source_compile_options(const.c  "-Wno-discarded-qualifiers")
 add_executable(test test.c)
 target_link_libraries(test PUBLIC dctx)
 default_compile_options(test)
+
+# python library
+find_package(Python3 COMPONENTS Development)
+Python3_add_library(_pydctx MODULE _pydctx.c)
+default_compile_options(_pydctx)
+target_link_libraries(_pydctx PUBLIC dctx)
+source_compile_options(_pydctx.c -fno-strict-aliasing)
