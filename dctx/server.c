@@ -92,6 +92,9 @@ static void listener_cb(uv_stream_t *srv, int status){
         goto fail;
     }
 
+    ret = uv_tcp_nodelay(&conn->tcp, 1);
+    if(ret < 0) uv_perror("warning: uv_tcp_nodelay failed", ret);
+
     ret = uv_accept((uv_stream_t*)&dctx->tcp, (uv_stream_t*)&conn->tcp);
     if(ret < 0){
         uv_perror("uv_accept", ret);

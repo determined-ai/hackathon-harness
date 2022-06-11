@@ -133,6 +133,10 @@ void close_for_retry_cb(uv_handle_t *handle){
         goto fail;
     }
     dctx->tcp_open = true;
+
+    ret = uv_tcp_nodelay(&dctx->tcp, 1);
+    if(ret < 0) uv_perror("warning: uv_tcp_nodelay failed", ret);
+
     ret = conn_next(dctx);
     if(ret) goto fail;
 
@@ -250,6 +254,9 @@ int init_client(dctx_t *dctx){
         return 1;
     }
     dctx->tcp_open = true;
+
+    ret = uv_tcp_nodelay(&dctx->tcp, 1);
+    if(ret < 0) uv_perror("warning: uv_tcp_nodelay failed", ret);
 
     ret = uv_timer_init(&dctx->loop, &dctx->client.timer);
     if(ret < 0){
