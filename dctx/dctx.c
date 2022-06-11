@@ -416,6 +416,7 @@ void read_cb(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf){
     // handle error cases
     if(nread < 1){
         if(buf->base) free(buf->base);
+        if(dctx->closed) return;
         if(nread == UV_EOF || nread == UV_ECONNRESET){
             // socket is closed
             dctx->on_broken_connection(dctx, stream);
@@ -447,6 +448,7 @@ fail:
 
 void dc_write_cb(uv_write_t *req, int status){
     dctx_t *dctx = req->handle->loop->data;
+    if(dctx->closed) goto handle_cb;
 
     if(status < 0){
         uv_perror("write_cb", status);

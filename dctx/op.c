@@ -164,6 +164,7 @@ void mark_op_completed_and_notify(dc_op_t *op){
 
 void dc_op_write_cb(dc_op_t *op){
     dctx_t *dctx = op->dctx;
+    if(dctx->closed) return;
     switch(op->type){
         case DC_OP_GATHER:
             if(dctx->rank == 0){
